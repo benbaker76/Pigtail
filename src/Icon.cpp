@@ -1,7 +1,7 @@
 #include "Icon.h"
 #include "RetroAvatar.h"
 #include "Names.h"
-#include "icons.h"
+#include "Icons.h"
 
 #include <algorithm>
 #include <cctype>
