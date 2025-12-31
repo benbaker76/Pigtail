@@ -1,0 +1,58 @@
+name: PIO-Cardputer
+
+on: [push, pull_request]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install PlatformIO Core
+        run: python3 -m pip install --upgrade platformio
+
+      - name: Get version from src/main.cpp
+        id: version
+        shell: bash
+        run: |
+          ver="$(grep -E '^[[:space:]]*#define[[:space:]]+VERSION[[:space:]]+"' src/main.cpp | sed -E 's/.*"([^"]+)".*/\1/')"
+          if [ -z "$ver" ]; then
+            echo "ERROR: VERSION not found in src/main.cpp"
+            exit 1
+          fi
+          echo "version=$ver" >> "$GITHUB_OUTPUT"
+          echo "Detected VERSION=$ver"
+
+      - name: Build firmware
+        run: platformio run -e m5stack-stamps3
+
+      - name: Stage release files
+        shell: bash
+        run: |
+          mkdir -p build
+          cp README.md LICENSE build/
+          cp .pio/build/m5stack-stamps3/firmware.bin "build/Pigtail-Cardputer-${{ steps.version.outputs.version }}.bin"
+
+      - name: Create tarball
+        shell: bash
+        run: |
+          tar -C build -czf build/Pigtail_Cardputer.tar.gz \
+            README.md \
+            LICENSE \
+            "Pigtail-Cardputer-${{ steps.version.outputs.version }}.bin"
+
+      - name: Upload to Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: Pigtail-Cardputer-${{ steps.version.outputs.version }}
+          path: build/Pigtail_Cardputer.tar.gz
+
+      - name: Upload to Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: svenstaro/upload-release-action@v2
+        with:
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          file: build/Pigtail_Cardputer.tar.gz
+          tag: ${{ steps.version.outputs.version }}
+          overwrite: true
