@@ -1,5 +1,6 @@
 #pragma once
 #include <Arduino.h>
+#include "MacPrefixes.h"
 
 enum class EntityKind : uint8_t { WifiClient = 1, BleAdv = 2, WifiAp = 3 };
 
@@ -7,6 +8,9 @@ struct EntityView {
   EntityKind kind;
   uint16_t   index;        // entity index
   uint8_t    addr[6];      // MAC address
+  Vendor     vendor;       // OUI vendor
+  uint8_t    ssid[32];     // SSID
+  uint8_t    ssid_len;     // SSID length
   float      score;        // 0..100 (tracks) or 0 for AP anchors
   int        rssi;         // dBm (EMA for tracks, last for AP)
   uint32_t   age_s;        // tracks: last-first; AP: seconds since last seen
@@ -30,6 +34,8 @@ public:
 
   // Build a sorted snapshot into out[]; returns count.
   int buildSnapshot(EntityView* out, int maxOut, float stationary_ratio);
+
+  void reset();
 
   // Accessors for UI/status
   uint32_t segmentId() const { return _segment_id; }

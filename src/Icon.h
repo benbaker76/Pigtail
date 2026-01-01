@@ -44,11 +44,11 @@ public:
                   std::uint8_t bar1ColorIndex,
                   float bar2Value,
                   std::uint8_t bar2ColorIndex,
-                  Icons::LvglSymbol largeIcon,
+                  const std::uint8_t* largeIcon,
                   std::uint8_t largeIconColorIndex,
-                  Icons::LvglSymbol smallIcon1,
+                  const std::uint8_t* smallIcon1,
                   std::uint8_t smallIcon1ColorIndex,
-                  Icons::LvglSymbol smallIcon2,
+                  const std::uint8_t* smallIcon2,
                   std::uint8_t smallIcon2ColorIndex);
 
     // Access the rendered indexed image (32x32).

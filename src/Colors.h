@@ -120,4 +120,35 @@ struct Colors
         ARGB_TO_RGB565(C64_LIGHT_BLUE),
         ARGB_TO_RGB565(C64_LIGHT_GREY)
     };
+
+    static inline constexpr std::array<std::uint8_t, 28> VendorColorIndices = {
+        0,  // Unknown
+        6,  // Apple          -> C_LIGHT_GREY
+        12, // Asus           -> C_BLUE
+        8,  // Broadcom       -> C_RED
+        14, // Chipolo        -> C_PINK
+        12, // Cisco          -> C_BLUE
+        13, // Csr            -> C_LAVENDER
+        12, // DLink          -> C_BLUE
+        8,  // Espressif      -> C_RED
+        6,  // Google         -> C_LIGHT_GREY
+        8,  // Huawei         -> C_RED
+        11, // Innway         -> C_GREEN
+        12, // Intel          -> C_BLUE
+        11, // Intelbras      -> C_GREEN
+        9,  // Mercury        -> C_ORANGE
+        11, // Mercusys       -> C_GREEN
+        5,  // Microsoft      -> C_DARK_GREY
+        9,  // Mikrotik       -> C_ORANGE
+        13, // Netgear        -> C_LAVENDER
+        6,  // RaspberryPi    -> C_LIGHT_GREY
+        12, // Qualcomm       -> C_BLUE
+        12, // Samsung        -> C_BLUE
+        5,  // Sony           -> C_DARK_GREY
+        8,  // Ti             -> C_RED
+        10, // Tile           -> C_YELLOW
+        11, // TpLink         -> C_GREEN
+        15, // Tracki         -> C_PEACH
+        12, // Ubiquiti       -> C_BLUE
+    };
 };

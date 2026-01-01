@@ -246,11 +246,11 @@ void Icon::DrawIcon(IconType iconType,
                   std::uint8_t bar1ColorIndex,
                   float bar2Value,
                   std::uint8_t bar2ColorIndex,
-                  Icons::LvglSymbol largeIcon,
+                  const std::uint8_t* largeIcon,
                   std::uint8_t largeIconColorIndex,
-                  Icons::LvglSymbol smallIcon1,
+                  const std::uint8_t* smallIcon1,
                   std::uint8_t smallIcon1ColorIndex,
-                  Icons::LvglSymbol smallIcon2,
+                  const std::uint8_t* smallIcon2,
                   std::uint8_t smallIcon2ColorIndex)
 {
     _imageData.Reset(_imageW, _imageH);
@@ -272,8 +272,8 @@ void Icon::DrawIcon(IconType iconType,
             retroAvatar.DrawAvatar(_imageData, 9, 4, SCALE_1X);
             DrawVerticalBar({1, 1, 2, 17}, bar1Value, bar1ColorIndex);
             DrawVerticalBar({4, 1, 2, 17}, bar2Value, bar2ColorIndex);
-            DrawIcon(Icons::Get8x8(smallIcon1), {24, 1, 8, 8}, smallIcon1ColorIndex);
-            DrawIcon(Icons::Get8x8(smallIcon2), {24, 10, 8, 8}, smallIcon2ColorIndex);
+            DrawIcon(smallIcon1, {24, 1, 8, 8}, smallIcon1ColorIndex);
+            DrawIcon(smallIcon2, {24, 10, 8, 8}, smallIcon2ColorIndex);
             DrawMacAddress();
             break;
         }
@@ -281,9 +281,9 @@ void Icon::DrawIcon(IconType iconType,
         {
             DrawVerticalBar({1, 1, 2, 17}, bar1Value, bar1ColorIndex);
             DrawVerticalBar({4, 1, 2, 17}, bar2Value, bar2ColorIndex);
-            DrawIcon(Icons::Get16x16(largeIcon), {7, 2, 16, 16}, largeIconColorIndex);
-            DrawIcon(Icons::Get8x8(smallIcon1), {24, 1, 8, 8}, smallIcon1ColorIndex);
-            DrawIcon(Icons::Get8x8(smallIcon2), {24, 10, 8, 8}, smallIcon2ColorIndex);
+            DrawIcon(largeIcon, {7, 2, 16, 16}, largeIconColorIndex);
+            DrawIcon(smallIcon1, {24, 1, 8, 8}, smallIcon1ColorIndex);
+            DrawIcon(smallIcon2, {24, 10, 8, 8}, smallIcon2ColorIndex);
             DrawMacAddress();
             break;
         }

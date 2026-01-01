@@ -50,7 +50,7 @@ private:
   // Icon rendering
   void renderGridIconToSprite(int dstX, int dstY, const EntityView& e);
   void renderDetailAvatar48(int dstX, int dstY, uint32_t id);
-  void renderIcon16ToSprite(int dstX, int dstY, Icons::LvglSymbol sym, uint8_t picoColorIndex);
+  void renderIcon16ToSprite(int dstX, int dstY, const uint8_t* iconData, uint8_t picoColorIndex);
 
   // Selection / navigation
   void setSelectionSlot(int slot);
@@ -62,8 +62,9 @@ private:
   void openDetail();
   void closeDetail();
 
-  static Icons::LvglSymbol typeToLvglSymbol(EntityKind kind);
+  static Icons::IconSymbol typeToIconSymbol(EntityKind kind);
   static uint8_t           typeToPicoColorIndex(EntityKind kind);
+  static const char*       typeToName(EntityKind kind);
 
   static float rssiTo01(int rssiDbm);
   static float clamp01(float v);

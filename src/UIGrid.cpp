@@ -8,6 +8,7 @@
 #include "RetroAvatar.h"
 #include "Names.h"
 #include "MarkovNameGenerator.h"
+#include "MacPrefixes.h"
 
 #include <algorithm>
 #include <array>
@@ -126,14 +127,14 @@ float UIGrid::rssiTo01(int rssiDbm)
   return clamp01(((float)rssiDbm - lo) / (hi - lo));
 }
 
-Icons::LvglSymbol UIGrid::typeToLvglSymbol(EntityKind kind)
+Icons::IconSymbol UIGrid::typeToIconSymbol(EntityKind kind)
 {
   switch (kind)
   {
-    case EntityKind::BleAdv:      return Icons::LvglSymbol::Bluetooth;
-    case EntityKind::WifiClient:  return Icons::LvglSymbol::Wifi;
-    case EntityKind::WifiAp:      return Icons::LvglSymbol::Home;
-    default:                      return Icons::LvglSymbol::Home;
+    case EntityKind::BleAdv:      return Icons::IconSymbol::Bluetooth;
+    case EntityKind::WifiClient:  return Icons::IconSymbol::Wifi;
+    case EntityKind::WifiAp:      return Icons::IconSymbol::AccessPoint;
+    default:                      return Icons::IconSymbol::None;
   }
 }
 
@@ -146,6 +147,17 @@ uint8_t UIGrid::typeToPicoColorIndex(EntityKind kind)
     case EntityKind::WifiClient:  return 11; // Green
     case EntityKind::WifiAp:      return 9;  // Orange
     default:                      return 7;  // White
+  }
+}
+
+const char* UIGrid::typeToName(EntityKind kind)
+{
+  switch (kind)
+  {
+    case EntityKind::BleAdv:      return "BLE";
+    case EntityKind::WifiClient:  return "WIFI";
+    case EntityKind::WifiAp:      return "AP";
+    default:                      return "UNK";
   }
 }
 
@@ -344,10 +356,22 @@ void UIGrid::handleKeyboard(Keyboard_Class& kb)
 {
   const auto& ks = kb.keysState();
 
+  const bool esc   = kb.isKeyPressed('`');
   const bool enter = ks.enter;
+  const bool back  = ks.del;
 
-  const bool esc   = kb.isKeyPressed((char)0x1B);
-  const bool back  = ks.del || kb.isKeyPressed('`') || esc;
+  // ESC = full reset/clear list (works from either screen)
+  if (esc) {
+    if (_tracker) _tracker->reset();
+
+    _screen = Screen::Grid;
+    _detail_index_valid = false;
+    _sel_index_valid = false;
+
+    _offset = 0;
+    setSelectionSlot(0);
+    return;
+  }
 
   // Space cycles icon mode (grid view only)
   const bool space = ks.space || kb.isKeyPressed(' ');
@@ -577,16 +601,25 @@ void UIGrid::drawDetail()
   const EntityView& e = *pe;
 
   // ---- Type icon + color (BT=blue, WiFi=green, AP=lavender) ----
-  const Icons::LvglSymbol sym = typeToLvglSymbol(e.kind);
+  const uint8_t* iconData = Icons::Get16x16(typeToIconSymbol(e.kind));
+  int iconColorIndex = typeToPicoColorIndex(e.kind);
 
   uint32_t id = HashMac32_Fnv1a(e.addr);
+
+  bool isMacRandomized = IsMacRandomized(e.addr);
+  std::string vendorStr = VendorToString(e.vendor);
+
+  if (e.vendor != Vendor::Unknown) {
+    iconData = Icons::Get16x16(e.vendor);
+    iconColorIndex = Colors::VendorColorIndices[static_cast<int>(e.vendor)];
+  }
 
   // ---- Retro name ----
   MarkovNameGenerator gen(Names::Hindu(), id, 1, 4, 8);
   const std::string name = ToUpper(gen.NextName());
 
   // ---- Header requested layout ----
-  renderIcon16ToSprite(4, 4, sym, typeToPicoColorIndex(e.kind));
+  renderIcon16ToSprite(4, 4, iconData, iconColorIndex);
 
   _spr->setTextSize(2);                 // name bigger
   _spr->setCursor(25, 5);
@@ -601,8 +634,22 @@ void UIGrid::drawDetail()
   char mac[18] = {};
   formatMac(e.addr, mac);
 
+  if (e.ssid_len > 0) {
+    char ssidPrintable[33] = {};
+    memcpy(ssidPrintable, e.ssid, std::min((size_t)e.ssid_len, sizeof(ssidPrintable) - 1));
+    _spr->setCursor(textX, textY);
+    _spr->printf("SSID: %s", ssidPrintable);
+    textY += 12;
+  }
+
+  if (e.vendor != Vendor::Unknown) {
+    _spr->setCursor(textX, textY);
+    _spr->printf("Vendor: %s", vendorStr.c_str());
+    textY += 12;
+  }
+
   _spr->setCursor(textX, textY);
-  _spr->printf("MAC: %s", mac);
+  _spr->printf("MAC: %s %s", mac, isMacRandomized ? "[R]" : "");
   textY += 12;
 
   _spr->setCursor(textX, textY);
@@ -612,6 +659,8 @@ void UIGrid::drawDetail()
   _spr->setCursor(textX, textY);
   _spr->printf("Score: %.1f", (double)e.score);
   textY += 12;
+
+  textY += 4;
 
   if (e.has_geo) {
     _spr->setCursor(textX, textY);
@@ -638,6 +687,11 @@ void UIGrid::drawDetail()
   _spr->setCursor(4, _h - 12);
   _spr->print("Enter/Del/Esc: back");
 
+  // Right justified type
+  const char* typeStr = typeToName(e.kind);
+  _spr->setCursor(_w - 4 - (strlen(typeStr) * 6), _h - 12);
+  _spr->print(typeStr);
+
   pushFrame();
 }
 
@@ -663,11 +717,23 @@ void UIGrid::renderGridIconToSprite(int dstX, int dstY, const EntityView& e)
   // bar2Value: keep score normalized as a useful second metric
   const float bar2 = clamp01((float)e.score / 100.0f);
 
-  const Icons::LvglSymbol symbol = typeToLvglSymbol(e.kind);
+  // If EntityView has MAC, replace here
+  char mac[18] = {};
+  formatMac(e.addr, mac);
+  std::string macStr = std::string(mac);
+
+  bool isMacRandomized = IsMacRandomized(e.addr);
+  std::string vendorStr = VendorToString(e.vendor);
+
+  uint32_t id = HashMac32_Fnv1a(e.addr);
+
+  const Icons::IconSymbol iconSymbol = typeToIconSymbol(e.kind);
+
+  const std::uint8_t* largeIcon = e.vendor != Vendor::Unknown ? Icons::Get16x16(e.vendor) : Icons::Get16x16(iconSymbol);
   const uint8_t typeColor = typeToPicoColorIndex(e.kind);
 
-  Icons::LvglSymbol small1 = e.has_geo ? Icons::LvglSymbol::Gps : Icons::LvglSymbol::Bullet;
-  Icons::LvglSymbol small2 = Icons::LvglSymbol::Bullet;
+  const std::uint8_t* small1Icon = e.has_geo ? Icons::Get8x8(Icons::IconSymbol::Gps) : Icons::Get8x8(Icons::IconSymbol::None);
+  const std::uint8_t* small2Icon = Icons::Get8x8(Icons::IconSymbol::None);
 
   std::uint8_t bar1ColorIndex = 12;
   std::uint8_t bar2ColorIndex = 13;
@@ -678,20 +744,22 @@ void UIGrid::renderGridIconToSprite(int dstX, int dstY, const EntityView& e)
 
   if (iconType == Icon::IconType::RetroAvatarWithMac)
   {
-    small2 = symbol;
+    small2Icon = Icons::Get8x8(iconSymbol);
     smallIcon2ColorIndex = typeColor;
   }
   else if (iconType == Icon::IconType::LargeIconWithMac)
   {
-    largeIconColorIndex = typeColor;
+    if (e.vendor != Vendor::Unknown)
+    {
+      largeIconColorIndex = Colors::VendorColorIndices[static_cast<int>(e.vendor)];
+      small2Icon = Icons::Get8x8(iconSymbol);
+      smallIcon2ColorIndex = typeColor;
+    }
+    else
+    {
+      largeIconColorIndex = typeColor;
+    }
   }
-
-  // If EntityView has MAC, replace here
-  char mac[18] = {};
-  formatMac(e.addr, mac);
-  std::string macStr = std::string(mac);
-
-  uint32_t id = HashMac32_Fnv1a(e.addr);
 
   Icon icon(id, mac);
   icon.DrawIcon(iconType,
@@ -699,11 +767,11 @@ void UIGrid::renderGridIconToSprite(int dstX, int dstY, const EntityView& e)
     bar1ColorIndex,
     bar2,
     bar2ColorIndex,
-    symbol,
+    largeIcon,
     largeIconColorIndex,
-    small1,
+    small1Icon,
     smallIcon1ColorIndex,
-    small2,
+    small2Icon,
     smallIcon2ColorIndex
   );
 
@@ -743,11 +811,9 @@ void UIGrid::renderDetailAvatar48(int dstX, int dstY, uint32_t id)
   );
 }
 
-void UIGrid::renderIcon16ToSprite(int dstX, int dstY, Icons::LvglSymbol sym, uint8_t picoColorIndex)
+void UIGrid::renderIcon16ToSprite(int dstX, int dstY,  const uint8_t* iconData, uint8_t picoColorIndex)
 {
   if (!_buf8) return;
-
-  const uint8_t* iconData = Icons::Get16x16(sym);
   if (!iconData) return;
 
   const int width = 16;

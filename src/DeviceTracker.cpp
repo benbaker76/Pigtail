@@ -4,6 +4,7 @@
 #include "esp_wifi.h"
 
 #include <NimBLEDevice.h>
+#include "MacPrefixes.h"
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -22,8 +23,8 @@ static constexpr int TRACK_IDLE_SEC_WIFI = 15 * 60;
 static constexpr int TRACK_IDLE_SEC_BLE  = 20 * 60;
 static constexpr int ANCHOR_IDLE_SEC     = 10 * 60;
 
-static constexpr int MAX_TRACKS  = 512;
-static constexpr int MAX_ANCHORS = 256;
+static constexpr int MAX_TRACKS  = 256;
+static constexpr int MAX_ANCHORS = 128;
 
 static constexpr int FP_TOP_N = 8;
 
@@ -55,6 +56,32 @@ static inline int rssi_bucket(int rssi_dbm) {
   return 0;
 }
 
+static inline void extract_ssid_ie(
+  const uint8_t* payload, int len, int ie_start,
+  uint8_t out_ssid[32], uint8_t* out_len)
+{
+  *out_len = 0;
+  if (!payload || len <= ie_start) return;
+
+  int i = ie_start;
+  while (i + 2 <= len) {
+    uint8_t id = payload[i + 0];
+    uint8_t l  = payload[i + 1];
+    i += 2;
+
+    if (i + l > len) break; // malformed IE list
+
+    if (id == 0) { // SSID
+      uint8_t ncopy = (uint8_t)std::min<int>(l, 32);
+      if (ncopy) memcpy(out_ssid, payload + i, ncopy);
+      *out_len = ncopy; // 0 means hidden
+      return;
+    }
+
+    i += l;
+  }
+}
+
 // ----------------------------- Model -----------------------------
 
 enum class TrackKind : uint8_t { WifiClient = 1, BleAdv = 2 };
@@ -63,6 +90,8 @@ struct Track {
   bool      in_use = false;
   TrackKind kind{};
   uint8_t   addr[6]{};
+
+  Vendor    vendor = Vendor::Unknown;
 
   uint16_t  index = 0;
   uint32_t  first_seen_s = 0;
@@ -86,6 +115,11 @@ struct Track {
 struct Anchor {
   bool     in_use = false;
   uint8_t  addr[6]{};
+
+  Vendor   vendor = Vendor::Unknown;
+
+  uint8_t  ssid[32]{};
+  uint8_t  ssid_len = 0;
 
   uint16_t index = 0;
   int      last_rssi = -100;
@@ -148,6 +182,8 @@ struct Observation {
   ObsKind  kind;
   int8_t   rssi_dbm;
   uint8_t  addr[6];
+  uint8_t  ssid[32];
+  uint8_t  ssid_len;
   uint32_t ts_s;
 };
 
@@ -190,6 +226,7 @@ static Track* find_or_alloc_track(TrackKind kind, const uint8_t addr[6], uint32_
       t.in_use = true;
       t.kind = kind;
       memcpy(t.addr, addr, 6);
+      t.vendor = GetVendor(addr);
       t.index = g_next_index++;
       t.first_seen_s = ts_s;
       t.last_seen_s  = ts_s;
@@ -209,6 +246,7 @@ static Track* find_or_alloc_track(TrackKind kind, const uint8_t addr[6], uint32_
   t.in_use = true;
   t.kind = kind;
   memcpy(t.addr, addr, 6);
+  t.vendor = GetVendor(addr);
   t.index = g_next_index++;
   t.first_seen_s = ts_s;
   t.last_seen_s  = ts_s;
@@ -228,6 +266,7 @@ static Anchor* find_or_alloc_anchor(const uint8_t bssid[6], uint32_t ts_s) {
       a = Anchor{};
       a.in_use = true;
       memcpy(a.addr, bssid, 6);
+      a.vendor = GetVendor(bssid);
       a.index = g_next_index++;
       a.last_seen_s = ts_s;
       a.last_rssi = -100;
@@ -244,6 +283,7 @@ static Anchor* find_or_alloc_anchor(const uint8_t bssid[6], uint32_t ts_s) {
   a = Anchor{};
   a.in_use = true;
   memcpy(a.addr, bssid, 6);
+  a.vendor = GetVendor(bssid);
   a.index = g_next_index++;
   a.last_seen_s = ts_s;
   a.last_rssi = -100;
@@ -438,6 +478,12 @@ static void process_observation(const Observation& obs) {
       a->last_seen_s = obs.ts_s;
       a->last_rssi   = obs.rssi_dbm;
 
+      if (obs.ssid_len > 0) {
+        uint8_t ncopy = (uint8_t)std::min<size_t>(obs.ssid_len, sizeof(a->ssid));
+        a->ssid_len = ncopy;
+        if (ncopy) memcpy(a->ssid, obs.ssid, ncopy);
+      }
+
       // If GPS fix available, geo-tag this anchor
       if (g_gps_valid) {
         // best-pass update
@@ -484,8 +530,12 @@ static void wifi_event(WiFiEvent_t event, WiFiEventInfo_t info) {
       obs.kind = ObsKind::WifiApBeacon;
       obs.ts_s = now_s();
       obs.rssi_dbm = (int8_t)WiFi.RSSI(i);
+      String ssid = WiFi.SSID(i);
       const uint8_t* bssid = WiFi.BSSID(i);
       memcpy(obs.addr, bssid, 6);
+      size_t ncopy = std::min<size_t>(ssid.length(), sizeof(obs.ssid));
+      obs.ssid_len = (uint8_t)ncopy;
+      if (ncopy) memcpy(obs.ssid, ssid.c_str(), ncopy);
       xQueueSend(g_obs_q, &obs, 0);
     }
   } else if (n == 0) {
@@ -521,31 +571,44 @@ static void IRAM_ATTR wifi_promisc_cb(void* buf, wifi_promiscuous_pkt_type_t typ
   const wifi_promiscuous_pkt_t* ppkt = (wifi_promiscuous_pkt_t*)buf;
   const uint8_t* payload = ppkt->payload;
   const int len = ppkt->rx_ctrl.sig_len;
+
   if (len < 24) return;
 
-  const ieee80211_hdr* h = (const ieee80211_hdr*)payload;
-
-  // Safer FC read (little-endian)
   uint16_t fc = payload[0] | (payload[1] << 8);
   if (fc_type(fc) != 0) return;
 
   const uint8_t st = fc_subtype(fc);
 
   Observation obs{};
-  obs.ts_s = (uint32_t)(esp_timer_get_time() / 1000000ULL);
+  obs.ts_s = now_s();
   obs.rssi_dbm = (int8_t)ppkt->rx_ctrl.rssi;
 
-  if (st == 8) { // beacon
-    obs.kind = ObsKind::WifiApBeacon;
+  const ieee80211_hdr* h = (const ieee80211_hdr*)payload;
+
+  if (st == 8 || st == 5) {
+    // beacon or probe response:
+    // 24-byte header + 12-byte fixed params = 36
+    const int ie_start = 36;
+    if (len <= ie_start) return;
+
+    obs.kind = (st == 8) ? ObsKind::WifiApBeacon : ObsKind::WifiApProbeResp;
     memcpy(obs.addr, h->addr3, 6); // BSSID
+
+    extract_ssid_ie(payload, len, ie_start, obs.ssid, &obs.ssid_len);
+
     xQueueSendFromISR(g_obs_q, &obs, nullptr);
-  } else if (st == 5) { // probe response
-    obs.kind = ObsKind::WifiApProbeResp;
-    memcpy(obs.addr, h->addr3, 6); // BSSID
-    xQueueSendFromISR(g_obs_q, &obs, nullptr);
-  } else if (st == 4) { // probe request
+  }
+  else if (st == 4) {
+    // probe request: client SA in addr2; IEs begin immediately after header (24)
     obs.kind = ObsKind::WifiProbeReq;
-    memcpy(obs.addr, h->addr2, 6); // client SA
+    memcpy(obs.addr, h->addr2, 6);
+
+    // OPTIONAL: extract probed SSID(s) (often SSID IE is present, may be empty or wildcard)
+    const int ie_start = 24;
+    if (len > ie_start) {
+      extract_ssid_ie(payload, len, ie_start, obs.ssid, &obs.ssid_len);
+    }
+
     xQueueSendFromISR(g_obs_q, &obs, nullptr);
   }
 }
@@ -562,6 +625,11 @@ public:
 
     NimBLEAddress a = dev->getAddress();
     memcpy(obs.addr, a.getNative(), 6);
+
+    auto name = dev->getName();
+    size_t ncopy = std::min<size_t>(name.length(), sizeof(obs.ssid));
+    obs.ssid_len = (uint8_t)ncopy;
+    if (ncopy) memcpy(obs.ssid, name.c_str(), ncopy);
 
     xQueueSend(g_obs_q, &obs, 0);
   }
@@ -649,7 +717,7 @@ bool DeviceTracker::begin() {
   Serial.println("DeviceTracker starting...");
   //g_salt ^= (uint64_t)esp_timer_get_time();
 
-  g_obs_q = xQueueCreate(1024, sizeof(Observation));
+  g_obs_q = xQueueCreate(256, sizeof(Observation));
   if (!g_obs_q) return false;
 
   init_wifi_sniffer();
@@ -692,6 +760,7 @@ int DeviceTracker::buildSnapshot(EntityView* out, int maxOut, float stationary_r
     e.kind = (t.kind == TrackKind::WifiClient) ? EntityKind::WifiClient : EntityKind::BleAdv;
     e.index = t.index;
     memcpy(e.addr, t.addr, 6);
+    e.vendor = t.vendor;
     e.rssi = (int)lroundf(t.ema_rssi);
     e.age_s = (t.last_seen_s - t.first_seen_s);
     e.last_seen_s = t.last_seen_s;
@@ -714,6 +783,9 @@ int DeviceTracker::buildSnapshot(EntityView* out, int maxOut, float stationary_r
     e.kind = EntityKind::WifiAp;
     e.index = a.index;
     memcpy(e.addr, a.addr, 6);
+    e.vendor = a.vendor;
+    e.ssid_len = std::min<uint8_t>(a.ssid_len, sizeof(e.ssid));
+    if (e.ssid_len) memcpy(e.ssid, a.ssid, e.ssid_len);
     e.rssi = a.last_rssi;
     e.age_s = (ts - a.last_seen_s);
     e.last_seen_s = a.last_seen_s;
@@ -748,4 +820,40 @@ int DeviceTracker::buildSnapshot(EntityView* out, int maxOut, float stationary_r
   _last_env_tick_s = g_last_env_tick_s;
 
   return n;
+}
+
+void DeviceTracker::reset()
+{
+  // Clear pending observations so we don't immediately repopulate from old data.
+  if (g_obs_q) {
+    xQueueReset(g_obs_q);
+  }
+
+  portENTER_CRITICAL(&g_lock);
+
+  // Clear tracked state
+  memset(g_tracks,  0, sizeof(g_tracks));
+  memset(g_anchors, 0, sizeof(g_anchors));
+  g_next_index = 1;
+
+  // Reset env segmentation / movement stats
+  g_last_fp = EnvFingerprint{};
+  g_last_env_tick_s = 0;
+  g_segment_id = 1;
+  g_move_segments = 0;
+
+  // Reset crowd window
+  g_current_window = 0;
+  g_window_unique_hits = 0;
+
+  // Reset GPS segmentation anchor (keep current GPS fix validity as-is)
+  g_gps_anchor_valid = false;
+  g_last_gps_seg_s = 0;
+
+  portEXIT_CRITICAL(&g_lock);
+
+  // Expose reset stats
+  _segment_id = g_segment_id;
+  _move_segments = g_move_segments;
+  _last_env_tick_s = g_last_env_tick_s;
 }
