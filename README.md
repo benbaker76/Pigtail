@@ -116,6 +116,7 @@ Default navigation (as implemented in the current UIGrid input handling):
 - **`.`** : down
 - **Enter** : open detail / confirm
 - **Del / Esc** : go home / back
+- **Esc** : reset (grid mode)
 - **Space** : cycle grid icon mode
 
 Navigation behavior:
