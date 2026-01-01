@@ -46,6 +46,7 @@ private:
   void drawGrid();
   void drawDetail();
   void drawTile(int slot, int x, int y);
+  void playSound(int frequency, int duration);
 
   // Icon rendering
   void renderGridIconToSprite(int dstX, int dstY, const EntityView& e);

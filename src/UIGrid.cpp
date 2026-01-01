@@ -370,6 +370,7 @@ void UIGrid::handleKeyboard(Keyboard_Class& kb)
 
     _offset = 0;
     setSelectionSlot(0);
+    playSound(800, 100);
     return;
   }
 
@@ -377,6 +378,7 @@ void UIGrid::handleKeyboard(Keyboard_Class& kb)
   const bool space = ks.space || kb.isKeyPressed(' ');
   if (_screen == Screen::Grid && space) {
     cycleGridIconMode();
+    playSound(600, 100);
     // do NOT return; allow other keys in same event (rare, but harmless)
   }
 
@@ -388,29 +390,31 @@ void UIGrid::handleKeyboard(Keyboard_Class& kb)
 
   if (_screen == Screen::Grid) {
 
-    // ESC or BACK in GRID = home (top-left). In detail it remains "back".
-    if (esc || back) {
+    // BACK in GRID = home (top-left). In detail it remains "back".
+    if (back) {
       _offset = 0;
       setSelectionSlot(0);
+      playSound(800, 100);
       return;
     }
 
-    if      (up)    nav(0, -1);
-    else if (down)  nav(0, +1);
-    else if (left)  nav(-1, 0);
-    else if (right) nav(+1, 0);
-    else if (enter) openDetail();
+    if      (up)    { nav(0, -1); playSound(800, 50); }
+    else if (down)  { nav(0, +1); playSound(800, 50); }
+    else if (left)  { nav(-1, 0); playSound(800, 50); }
+    else if (right) { nav(+1, 0); playSound(800, 50); }
+    else if (enter) { openDetail(); playSound(1000, 100); }
 
   } else {
 
     // detail view
     if (enter || back) {
       closeDetail();
+      playSound(800, 100);
     } else {
-      if      (up)    nav(0, -1);
-      else if (down)  nav(0, +1);
-      else if (left)  nav(-1, 0);
-      else if (right) nav(+1, 0);
+      if      (up)    { nav(0, -1); playSound(800, 50); }
+      else if (down)  { nav(0, +1); playSound(800, 50); }
+      else if (left)  { nav(-1, 0); playSound(800, 50); }
+      else if (right) { nav(+1, 0); playSound(800, 50); }
     }
   }
 }
@@ -568,6 +572,11 @@ void UIGrid::drawTile(int slot, int x, int y)
   const auto& e = _items[idx];
 
   renderGridIconToSprite(x, y, e);
+}
+
+void UIGrid::playSound(int frequency, int duration)
+{
+  M5Cardputer.Speaker.tone(frequency, duration);
 }
 
 void UIGrid::drawDetail()
