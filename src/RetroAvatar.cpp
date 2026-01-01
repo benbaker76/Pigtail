@@ -9,14 +9,15 @@
 #include <stdexcept>
 #include <iostream>
 
-RetroAvatar::RetroAvatar(std::uint32_t id)
-    : _random(DeterministicRng(id))
+RetroAvatar::RetroAvatar()
+    : _random(DeterministicRng())
     , _colorIndices({ 0, 7, 2, 3, 4, 5, 6 })
 {
 }
 
-void RetroAvatar::GenerateAvatar()
+void RetroAvatar::GenerateAvatar(std::uint32_t id)
 {
+    _random.Reset(id);
     _avatarData.Reset(_avatarSize.w, _avatarSize.h);
 
     GeneratePalette();

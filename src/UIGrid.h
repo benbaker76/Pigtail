@@ -6,8 +6,7 @@
 #include <M5Cardputer.h>
 #include "DeviceTracker.h"
 #include "Icons.h"
-
-class Icon;
+#include "Icon.h"
 
 class UIGrid
 {
@@ -71,6 +70,7 @@ private:
   static float clamp01(float v);
 
 private:
+  Icon _icon;
   std::string _version;
 
   DeviceTracker* _tracker = nullptr;
@@ -101,4 +101,5 @@ private:
   int  _w = 0;
   int  _h = 0;
   uint8_t* _buf8 = nullptr; // RGB332 sprite buffer
+  ByteGrid _grid;
 };

@@ -7,8 +7,8 @@
 class DeterministicRng
 {
 public:
-    explicit DeterministicRng(std::uint32_t seed) : DeterministicRng((std::uint64_t)seed) {}
-    explicit DeterministicRng(std::uint64_t seed);
+    DeterministicRng();
+    void Reset(std::uint64_t seed);
 
     std::uint32_t NextU32();
     int Next();

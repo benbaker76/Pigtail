@@ -16,9 +16,9 @@
 class RetroAvatar
 {
 public:
-    explicit RetroAvatar(std::uint32_t id);
+    RetroAvatar();
 
-    void GenerateAvatar();
+    void GenerateAvatar(std::uint32_t id);
     void DrawName(int offsetY);
     void DrawAvatar(ByteGrid &imageData, int offsetX, int offsetY, int scale);
 

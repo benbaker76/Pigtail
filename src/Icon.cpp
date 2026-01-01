@@ -42,14 +42,31 @@ namespace
     }
 }
 
-Icon::Icon(std::uint32_t id, std::string macAddress)
-    : _id(id)
-    , _random(DeterministicRng(id))
-    , _macAddress(macAddress)
+Icon::Icon()
+    : _id(0)
+    , _random(DeterministicRng())
+    , _macAddress("00:00:00:00:00:00")
     , _fontRenderer()
-    , _markovNameGenerator(Names::Hindu(), id, 1, 4, 8)
+    , _markovNameGenerator(Names::Hindu(), 1, 4, 8)
+    , _retroAvatar()
 {
+}
+
+void Icon::Reset(std::uint32_t id)
+{
+    _id = id;
+    _random.Reset(id);
+    _markovNameGenerator.Reset(id);
+    _retroAvatar.GenerateAvatar(id);
+
+    _name = ToUpper(_markovNameGenerator.NextName());
     _imageData.Reset(_imageW, _imageH);
+}
+
+void Icon::Reset(std::uint32_t id, std::string macAddress)
+{
+    _macAddress = macAddress;
+    Reset(id);
 }
 
 std::uint8_t Icon::MapByteToColorIndex(std::uint8_t value)
@@ -101,11 +118,10 @@ bool Icon::TryParseMacBytes(std::string_view mac, std::array<std::uint8_t, 6>& o
 
 void Icon::DrawName(int offsetY)
 {
-    std::string name = ToUpper(_markovNameGenerator.NextName());
-    Size textSize{ (int)name.size() * _glyphSize.w, _glyphSize.h };
+    Size textSize{ (int)_name.size() * _glyphSize.w, _glyphSize.h };
     Point textLoc{ (_iconSize.w / 2) - (textSize.w / 2) + 1, offsetY };
 
-    _fontRenderer.DrawText(_imageData.Raw(), _iconSize.w, _iconSize.h, COLOR_TEXT, textLoc.x, textLoc.y, name);
+    _fontRenderer.DrawText(_imageData.Raw(), _iconSize.w, _iconSize.h, COLOR_TEXT, textLoc.x, textLoc.y, _name);
 }
 
 void Icon::DrawMacAddress()
@@ -209,7 +225,7 @@ void Icon::DrawIcon(const std::uint8_t* iconData, Rect iconRect, int colorIndex)
     const int bytesPerRow  = (width + 7) >> 3;
 
     if (!iconData)
-        throw std::invalid_argument("iconData is null.");
+        return;
 
     // Destination bounds (clip like the C# code).
     const int dstW = _imageData.Width();   // or GetWidth()
@@ -259,17 +275,13 @@ void Icon::DrawIcon(IconType iconType,
     {
         case IconType::RetroAvatar:
         {
-            RetroAvatar retroAvatar(_id);
-            retroAvatar.GenerateAvatar();
-            retroAvatar.DrawAvatar(_imageData, 4, 1, SCALE_2X);
+            _retroAvatar.DrawAvatar(_imageData, 4, 1, SCALE_2X);
             DrawName(26);
             break;
         }
         case IconType::RetroAvatarWithMac:
         {
-            RetroAvatar retroAvatar(_id);
-            retroAvatar.GenerateAvatar();
-            retroAvatar.DrawAvatar(_imageData, 9, 4, SCALE_1X);
+            _retroAvatar.DrawAvatar(_imageData, 9, 4, SCALE_1X);
             DrawVerticalBar({1, 1, 2, 17}, bar1Value, bar1ColorIndex);
             DrawVerticalBar({4, 1, 2, 17}, bar2Value, bar2ColorIndex);
             DrawIcon(smallIcon1, {24, 1, 8, 8}, smallIcon1ColorIndex);

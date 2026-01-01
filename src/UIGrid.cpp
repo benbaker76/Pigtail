@@ -624,8 +624,8 @@ void UIGrid::drawDetail()
   }
 
   // ---- Retro name ----
-  MarkovNameGenerator gen(Names::Hindu(), id, 1, 4, 8);
-  const std::string name = ToUpper(gen.NextName());
+  _icon.Reset(id);
+  const std::string name = _icon.Name();
 
   // ---- Header requested layout ----
   renderIcon16ToSprite(4, 4, iconData, iconColorIndex);
@@ -770,8 +770,8 @@ void UIGrid::renderGridIconToSprite(int dstX, int dstY, const EntityView& e)
     }
   }
 
-  Icon icon(id, mac);
-  icon.DrawIcon(iconType,
+  _icon.Reset(id, mac);
+  _icon.DrawIcon(iconType,
     bar1,
     bar1ColorIndex,
     bar2,
@@ -785,7 +785,7 @@ void UIGrid::renderGridIconToSprite(int dstX, int dstY, const EntityView& e)
   );
 
   int iw=0, ih=0;
-  const uint8_t* src = GetIconPixels32(icon, iw, ih);
+  const uint8_t* src = GetIconPixels32(_icon, iw, ih);
   if (!src || iw <= 0 || ih <= 0) return;
 
   blitIndexedToSprite8(
@@ -805,17 +805,15 @@ void UIGrid::renderDetailAvatar48(int dstX, int dstY, uint32_t id)
   static constexpr int AW = 48;
   static constexpr int AH = 48;
 
-  ByteGrid grid;
-  grid.Reset(AW, AH);
+  _grid.Reset(AW, AH);
 
-  RetroAvatar ra(id);
-  ra.GenerateAvatar();
-  ra.DrawAvatar(grid, 0, 0, SCALE_4X);
+  _icon.Reset(id);
+  _icon.DrawAvatar(_grid, 0, 0, SCALE_4X);
 
   blitIndexedToSprite8(
     _buf8, _w, _h,
     dstX, dstY,
-    grid.Raw().data(), AW, AH,
+    _grid.Raw().data(), AW, AH,
     g_pico332
   );
 }

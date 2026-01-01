@@ -7,6 +7,7 @@
 #include "ByteGrid.h"
 #include "FontRenderer.h"
 #include "DeterministicRng.h"
+#include "RetroAvatar.h"
 #include "MarkovNameGenerator.h"
 #include "Geometry.h"
 #include "Icons.h"
@@ -34,7 +35,9 @@ public:
         LargeIconWithMac
     };
 
-    Icon(std::uint32_t id, std::string macAddress);
+    Icon();
+    void Reset(std::uint32_t id);
+    void Reset(std::uint32_t id, std::string macAddress);
 
     void DrawName(int offsetY);
     void DrawMacAddress();
@@ -50,6 +53,9 @@ public:
                   std::uint8_t smallIcon1ColorIndex,
                   const std::uint8_t* smallIcon2,
                   std::uint8_t smallIcon2ColorIndex);
+    void DrawAvatar(ByteGrid &imageData, int offsetX, int offsetY, int scale) {
+        _retroAvatar.DrawAvatar(imageData, offsetX, offsetY, scale);
+    }
 
     // Access the rendered indexed image (32x32).
     const ByteGrid& ImageData() const { return _imageData; }
@@ -58,6 +64,7 @@ public:
     const std::vector<std::uint8_t>& Pixels() const { return _imageData.Raw(); }
     int ImageW() const { return _imageW; }
     int ImageH() const { return _imageH; }
+    std::string &Name() { return _name; }
     std::string &MacAddress() { return _macAddress; }
 
 private:
@@ -74,6 +81,7 @@ private:
     std::string _macAddress;
     FontRenderer _fontRenderer;
     MarkovNameGenerator _markovNameGenerator;
+    RetroAvatar _retroAvatar;
 
     Size _iconSize{ 32, 32 };
     Size _glyphSize{ 4, 5 };
@@ -81,6 +89,8 @@ private:
     // Output image size
     int _imageW = 32;
     int _imageH = 32;
+
+    std::string _name;
 
     ByteGrid _imageData;
 };
