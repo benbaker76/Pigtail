@@ -7,7 +7,7 @@
 #include "Logo.h"
 #include "Colors.h"
 
-#define VERSION "1.0.03"
+#define VERSION "1.0.04"
 
 static DeviceTracker g_tracker;
 static UIGrid g_ui(VERSION);
