@@ -21,6 +21,30 @@ static constexpr uint32_t SPLASH_MS = 5000;
 // Common conventions vary; this makes it easy to correct.
 static constexpr bool LOGO_HIGH_NIBBLE_FIRST = true; // even-x pixel uses high nibble
 
+static void toneMs(int f, int ms)
+{
+  M5Cardputer.Speaker.tone(f, ms);
+  delay(ms + 8);
+}
+
+static inline void playStartupSound()
+{
+  // quick upward sweep
+  for (int f = 220; f <= 880; f += 40) {
+    M5Cardputer.Speaker.tone(f, 8);
+    delay(9);
+  }
+  delay(25);
+
+  // fast arpeggio to mimic a richer sound
+  toneMs(988,  45);   // B5
+  toneMs(1319, 45);   // E6
+  toneMs(1568, 70);   // G6
+
+  // tiny “confirmation” ping
+  toneMs(1760, 35);   // A6
+}
+
 static inline uint8_t logoPixelIndex32x32(int x, int y)
 {
     // packed: 2 pixels per byte
@@ -103,6 +127,8 @@ void setup() {
 
   // Draw splash immediately
   drawSplashScreen();
+
+  playStartupSound();
 
   // Start GNSS with M5Cardputer CAP LoRa868 GPS configuration
   // Based on the demo, GPS uses:
