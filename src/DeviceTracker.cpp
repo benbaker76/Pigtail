@@ -319,7 +319,7 @@ static void update_track_from_obs(Track& t, int rssi_dbm, uint32_t ts_s) {
 
 static EnvFingerprint build_fingerprint(uint32_t ts_s) {
   struct Tmp { uint8_t addr[6]; int rssi; };
-  Tmp tmp[MAX_ANCHORS];
+  static Tmp tmp[MAX_ANCHORS];
   int n = 0;
 
   for (int i = 0; i < MAX_ANCHORS; i++) {
@@ -615,21 +615,47 @@ static void IRAM_ATTR wifi_promisc_cb(void* buf, wifi_promiscuous_pkt_type_t typ
 
 // ----------------------------- BLE scanning -----------------------------
 
-class ScanCB : public NimBLEAdvertisedDeviceCallbacks {
+static inline void extract_ble_name(
+    const uint8_t* payload, size_t len,
+    uint8_t out[32], uint8_t* out_len)
+{
+  *out_len = 0;
+  if (!payload || len < 2) return;
+
+  size_t i = 0;
+  while (i < len) {
+    uint8_t ad_len = payload[i];
+    if (ad_len == 0) break;
+    if (i + 1 + ad_len > len) break;
+
+    uint8_t ad_type = payload[i + 1];
+    const uint8_t* ad_data = payload + i + 2;
+    size_t ad_data_len = ad_len - 1;
+
+    if (ad_type == 0x09 || ad_type == 0x08) { // Complete/Shortened Local Name
+      size_t ncopy = std::min<size_t>(ad_data_len, 32);
+      if (ncopy) memcpy(out, ad_data, ncopy);
+      *out_len = (uint8_t)ncopy;
+      return;
+    }
+    i += (1 + ad_len);
+  }
+}
+
+class ScanCB : public NimBLEScanCallbacks {
 public:
-  void onResult(NimBLEAdvertisedDevice* dev) override {
+  void onResult(const NimBLEAdvertisedDevice* dev) override {
     Observation obs{};
     obs.kind = ObsKind::BleAdv;
     obs.ts_s = now_s();
     obs.rssi_dbm = (int8_t)dev->getRSSI();
 
     NimBLEAddress a = dev->getAddress();
-    memcpy(obs.addr, a.getNative(), 6);
+    const ble_addr_t* addr_ptr = a.getBase();
+    memcpy(obs.addr, addr_ptr->val, 6);
 
-    auto name = dev->getName();
-    size_t ncopy = std::min<size_t>(name.length(), sizeof(obs.ssid));
-    obs.ssid_len = (uint8_t)ncopy;
-    if (ncopy) memcpy(obs.ssid, name.c_str(), ncopy);
+    const std::vector<uint8_t>& p = dev->getPayload();
+    extract_ble_name(p.data(), p.size(), obs.ssid, &obs.ssid_len);
 
     xQueueSend(g_obs_q, &obs, 0);
   }
@@ -701,15 +727,48 @@ static void init_ble_scan() {
   NimBLEDevice::setPower(ESP_PWR_LVL_P9);
 
   g_scan = NimBLEDevice::getScan();
-  g_scan->setAdvertisedDeviceCallbacks(new ScanCB(), false);
+  g_scan->setScanCallbacks(new ScanCB(), false);
   g_scan->setActiveScan(true);
   g_scan->setInterval(45);
   g_scan->setWindow(15);
+  g_scan->setMaxResults(0);
   g_scan->setDuplicateFilter(false);
-  g_scan->start(0, nullptr, false);
+  g_scan->start(0, false, false);
 
   Serial.println("BLE sniffer started");
 }
+
+static constexpr int OBS_Q_LEN = 64;
+
+// Keep Observation as-is for now (we’ll slim it later if needed).
+static StaticQueue_t g_obs_q_struct;
+static uint8_t g_obs_q_storage[OBS_Q_LEN * sizeof(Observation)];
+
+static void init_obs_queue() {
+  g_obs_q = xQueueCreateStatic(
+      OBS_Q_LEN,
+      sizeof(Observation),
+      g_obs_q_storage,
+      &g_obs_q_struct
+  );
+}
+
+static StaticTask_t g_proc_tcb;
+static StackType_t  g_proc_stack[8192 / sizeof(StackType_t)];
+
+static StaticTask_t g_hop_tcb;
+static StackType_t  g_hop_stack[4096 / sizeof(StackType_t)];
+
+static void start_tasks() {
+  xTaskCreateStaticPinnedToCore(processing_task, "dt_proc",
+      (uint32_t)(sizeof(g_proc_stack)/sizeof(g_proc_stack[0])),
+      nullptr, 10, g_proc_stack, &g_proc_tcb, 0);
+
+  xTaskCreateStaticPinnedToCore(wifi_hop_task, "dt_hop",
+      (uint32_t)(sizeof(g_hop_stack)/sizeof(g_hop_stack[0])),
+      nullptr, 6, g_hop_stack, &g_hop_tcb, 0);
+}
+
 
 // ----------------------------- DeviceTracker API -----------------------------
 
@@ -717,14 +776,13 @@ bool DeviceTracker::begin() {
   Serial.println("DeviceTracker starting...");
   //g_salt ^= (uint64_t)esp_timer_get_time();
 
-  g_obs_q = xQueueCreate(256, sizeof(Observation));
+  init_obs_queue();
   if (!g_obs_q) return false;
 
   init_wifi_sniffer();
   init_ble_scan();
 
-  xTaskCreatePinnedToCore(processing_task, "dt_proc", 8192, nullptr, 10, nullptr, 0);
-  xTaskCreatePinnedToCore(wifi_hop_task, "dt_hop",  4096, nullptr,  6, nullptr, 0);
+  start_tasks();
 
   // expose segment stats
   _segment_id = g_segment_id;

@@ -21,6 +21,71 @@ static constexpr uint32_t SPLASH_MS = 5000;
 // Common conventions vary; this makes it easy to correct.
 static constexpr bool LOGO_HIGH_NIBBLE_FIRST = true; // even-x pixel uses high nibble
 
+// Prefer explicit caps queries. MALLOC_CAP_DEFAULT is "whatever malloc() uses"
+// and can span multiple regions; it is useful but not the whole story.
+static inline void PrintHeapTelemetry(const char* tag = nullptr)
+{
+    // 8-bit addressable heap (most general allocations land here)
+    const size_t free_8   = heap_caps_get_free_size(MALLOC_CAP_8BIT);
+    const size_t large_8  = heap_caps_get_largest_free_block(MALLOC_CAP_8BIT);
+    const size_t min_8    = heap_caps_get_minimum_free_size(MALLOC_CAP_8BIT);
+
+    // Internal RAM (excludes PSRAM). Good proxy for "real" headroom on non-PSRAM boards.
+    const size_t free_int  = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
+    const size_t large_int = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL);
+    const size_t min_int   = heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL);
+
+    // DMA-capable internal RAM (critical for some peripherals / drivers / sprites depending on libs)
+    const size_t free_dma  = heap_caps_get_free_size(MALLOC_CAP_DMA);
+    const size_t large_dma = heap_caps_get_largest_free_block(MALLOC_CAP_DMA);
+    const size_t min_dma   = heap_caps_get_minimum_free_size(MALLOC_CAP_DMA);
+
+    // PSRAM/SPIRAM heap (0 if not present / not enabled)
+    const size_t free_psram  = heap_caps_get_free_size(MALLOC_CAP_SPIRAM);
+    const size_t large_psram = heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM);
+    const size_t min_psram   = heap_caps_get_minimum_free_size(MALLOC_CAP_SPIRAM);
+
+    // Default heap (what malloc/new will normally use)
+    const size_t free_def  = heap_caps_get_free_size(MALLOC_CAP_DEFAULT);
+    const size_t large_def = heap_caps_get_largest_free_block(MALLOC_CAP_DEFAULT);
+    const size_t min_def   = heap_caps_get_minimum_free_size(MALLOC_CAP_DEFAULT);
+
+    // Stack high-water mark (words -> bytes)
+    const UBaseType_t stack_words = uxTaskGetStackHighWaterMark(nullptr);
+    const size_t stack_bytes = (size_t)stack_words * sizeof(StackType_t);
+
+    if (tag && *tag) {
+        Serial.printf("[%s] ", tag);
+    } else {
+        Serial.print("[heap] ");
+    }
+
+    // Keep it single-line to make log scanning easy.
+    Serial.printf("def free=%u largest=%u min=%u | "
+                  "int free=%u largest=%u min=%u | "
+                  "dma free=%u largest=%u min=%u | "
+                  "8bit free=%u largest=%u min=%u | "
+                  "psram free=%u largest=%u min=%u | "
+                  "stack_hiwater=%u bytes\n",
+                  (unsigned)free_def,  (unsigned)large_def,  (unsigned)min_def,
+                  (unsigned)free_int,  (unsigned)large_int,  (unsigned)min_int,
+                  (unsigned)free_dma,  (unsigned)large_dma,  (unsigned)min_dma,
+                  (unsigned)free_8,    (unsigned)large_8,    (unsigned)min_8,
+                  (unsigned)free_psram,(unsigned)large_psram,(unsigned)min_psram,
+                  (unsigned)stack_bytes);
+}
+
+// Call this from loop() to throttle printing.
+static inline void PrintHeapTelemetryEvery(uint32_t intervalMs, const char* tag = nullptr)
+{
+    static uint32_t last = 0;
+    const uint32_t now = millis();
+    if ((uint32_t)(now - last) >= intervalMs) {
+        last = now;
+        PrintHeapTelemetry(tag);
+    }
+}
+
 static void toneMs(int f, int ms)
 {
   M5Cardputer.Speaker.tone(f, ms);
@@ -158,6 +223,8 @@ void setup() {
   Serial.printf("[heap] free=%u min=%u\n",
               (unsigned)esp_get_free_heap_size(),
               (unsigned)esp_get_minimum_free_heap_size());
+
+  //PrintHeapTelemetryEvery(2000, "main");
 }
 
 void loop() {
@@ -165,11 +232,6 @@ void loop() {
 
   auto s = gnssModule.snapshot();
   g_tracker.setGpsFix(s.valid, s.lat, s.lon);
-
-  /* if (M5Cardputer.Keyboard.isChange() && M5Cardputer.Keyboard.isPressed()) {
-    Keyboard_Class::KeysState ks = M5Cardputer.Keyboard.keysState();
-    g_ui.handleKeys(ks);
-  } */
 
   if (M5Cardputer.Keyboard.isChange() && M5Cardputer.Keyboard.isPressed())
     g_ui.handleKeyboard(M5Cardputer.Keyboard);

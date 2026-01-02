@@ -36,6 +36,7 @@ public:
 
     std::vector<std::uint8_t>& Raw() { return _data; }
     const std::vector<std::uint8_t>& Raw() const { return _data; }
+    size_t Size() const { return _data.size(); }
 
 private:
     int _w = 0, _h = 0;

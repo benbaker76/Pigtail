@@ -44,7 +44,7 @@ Use this responsibly and comply with local laws and venue policies. This project
 
 ## Screenshots
 
-![](images/pigtail_00.jpg)
+![](images/pigtail_00.gif)
 
 ![](images/pigtail_00.png)
 

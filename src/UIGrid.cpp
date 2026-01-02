@@ -21,9 +21,21 @@
 // ------------------------------------------------------------
 namespace
 {
-  static inline void formatMac(const uint8_t *mac, char *out) {
-    sprintf(out, "%02X:%02X:%02X:%02X:%02X:%02X",
-            mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+  static inline void formatMac(const uint8_t mac[6], char out[18])
+  {
+      if (!mac || !out) return;
+
+      static constexpr char kHex[] = "0123456789ABCDEF";
+
+      int j = 0;
+      for (int i = 0; i < 6; ++i)
+      {
+          const uint8_t b = mac[i];
+          out[j++] = kHex[(b >> 4) & 0x0F];
+          out[j++] = kHex[b & 0x0F];
+          if (i != 5) out[j++] = ':';
+      }
+      out[j] = '\0';
   }
 
   static inline uint32_t HashMac32_Fnv1a(const uint8_t addr[6])

@@ -3,22 +3,40 @@
 // Updates by Ben Baker
 
 #include "RetroAvatar.h"
-#include <deque>
+
 #include <algorithm>
 #include <cctype>
-#include <stdexcept>
-#include <iostream>
+#include <array>
 
 RetroAvatar::RetroAvatar()
     : _random(DeterministicRng())
-    , _colorIndices({ 0, 7, 2, 3, 4, 5, 6 })
+    , _colorIndices{ { 0, 7, 2, 3, 4, 5, 6 } }
 {
+    EnsureAvatarBuffer();
+    ClearAvatar((std::uint8_t)COLOR_NONE);
+
+    FfClear();
+}
+
+void RetroAvatar::EnsureAvatarBuffer()
+{
+    if (_avatarData.Width() != _avatarSize.w || _avatarData.Height() != _avatarSize.h)
+        _avatarData.Reset(_avatarSize.w, _avatarSize.h);
+}
+
+void RetroAvatar::ClearAvatar(std::uint8_t value)
+{
+    for (int y = 0; y < _avatarData.Height(); ++y)
+        for (int x = 0; x < _avatarData.Width(); ++x)
+            _avatarData.At(x, y) = value;
 }
 
 void RetroAvatar::GenerateAvatar(std::uint32_t id)
 {
     _random.Reset(id);
-    _avatarData.Reset(_avatarSize.w, _avatarSize.h);
+
+    EnsureAvatarBuffer();
+    ClearAvatar((std::uint8_t)COLOR_NONE);
 
     GeneratePalette();
     GrowBitmap();
@@ -28,18 +46,19 @@ void RetroAvatar::DrawAvatar(ByteGrid& imageData, int offsetX, int offsetY, int 
 {
     // Source is always the avatar grid (fixed size).
     // offsetX/offsetY are the source top-left in _avatarData (same semantics as your current code).
-    Rect srcRect{ offsetX, offsetY, _avatarSize.w, _avatarSize.h };
+    const int srcW = _avatarSize.w;
+    const int srcH = _avatarSize.h;
 
-    for (int y = 0; y < srcRect.h; y++)
+    for (int y = 0; y < srcH; y++)
     {
-        for (int x = 0; x < srcRect.w; x++)
+        for (int x = 0; x < srcW; x++)
         {
-            std::uint8_t src = _avatarData.At(x, y);
-            std::uint8_t colorIndex = _colorIndices[(size_t)src];
+            const std::uint8_t src = _avatarData.At(x, y);
+            const std::uint8_t colorIndex = _colorIndices[(size_t)src];
 
             // Destination top-left for this avatar pixel (scaled).
-            const int dstX0 = srcRect.x + (x * scale);
-            const int dstY0 = srcRect.y + (y * scale);
+            const int dstX0 = offsetX + (x * scale);
+            const int dstY0 = offsetY + (y * scale);
 
             // Fill a scale x scale block, clipped to image bounds.
             for (int sy = 0; sy < scale; ++sy)
@@ -63,7 +82,8 @@ void RetroAvatar::DrawAvatar(ByteGrid& imageData, int offsetX, int offsetY, int 
 
 void RetroAvatar::GeneratePalette()
 {
-    std::vector<bool> used(16, false);
+    std::array<bool, 16> used{};
+    used.fill(false);
 
     used[_colorIndices[(size_t)COLOR_NONE]] = true;
     used[_colorIndices[(size_t)COLOR_TEXT]] = true;
@@ -78,31 +98,61 @@ void RetroAvatar::GeneratePalette()
     }
 }
 
+// ---- Flood fill queue helpers --------------------------------------------
+
+void RetroAvatar::FfClear()
+{
+    _ffHead = 0;
+    _ffTail = 0;
+}
+
+bool RetroAvatar::FfPush(Point p)
+{
+    if (_ffTail >= kMaxFloodFillCells)
+        return false;
+    _ffQueue[_ffTail++] = p;
+    return true;
+}
+
+bool RetroAvatar::FfPop(Point& out)
+{
+    if (_ffHead >= _ffTail)
+        return false;
+    out = _ffQueue[_ffHead++];
+    return true;
+}
+
 void RetroAvatar::FloodFill(int x, int y, std::uint8_t color)
 {
-    std::uint8_t floodTo = color;
-    std::uint8_t floodFrom = _avatarData.At(x, y);
-    _avatarData.At(x, y) = floodTo;
+    if (!_avatarData.InBounds(x, y))
+        return;
+
+    const std::uint8_t floodTo   = color;
+    const std::uint8_t floodFrom = _avatarData.At(x, y);
 
     if (floodFrom == floodTo)
         return;
 
-    std::deque<Point> q;
-    q.push_back({ x, y });
+    // Seed
+    _avatarData.At(x, y) = floodTo;
 
-    while (!q.empty())
+    FfClear();
+    (void)FfPush({ x, y });
+
+    Point cur{};
+    while (FfPop(cur))
     {
-        Point cur = q.front();
-        q.pop_front();
+        static constexpr Point offsets[4] = { {0,-1},{0,1},{-1,0},{1,0} };
 
-        const Point offsets[4] = { {0,-1},{0,1},{-1,0},{1,0} };
         for (const Point& off : offsets)
         {
-            Point nxt{ cur.x + off.x, cur.y + off.y };
-            if (_avatarData.InBounds(nxt.x, nxt.y) && _avatarData.At(nxt.x, nxt.y) == floodFrom)
+            const int nx = cur.x + off.x;
+            const int ny = cur.y + off.y;
+
+            if (_avatarData.InBounds(nx, ny) && _avatarData.At(nx, ny) == floodFrom)
             {
-                q.push_back(nxt);
-                _avatarData.At(nxt.x, nxt.y) = floodTo;
+                _avatarData.At(nx, ny) = floodTo;
+                (void)FfPush({ nx, ny });
             }
         }
     }
@@ -129,7 +179,7 @@ void RetroAvatar::GrowBitmap()
         for (int x = 0; x < _avatarData.Width(); x++)
         {
             // Very simple! The higher the value of C the more solid pixels are placed.
-            int c = 158;
+            const int c = 158;
             if (_random.Next(32767) % 356 > c)
                 SetPixel(x, y, (std::uint8_t)COLOR_NONE); // Empty
             else
@@ -172,10 +222,10 @@ void RetroAvatar::EnhanceFace()
         if (GetPixel(halfX - 2, y) == COLOR_NONE) // Any potential eye areas one pixel further away?
         {
             FloodFill(halfX - 2, y, (std::uint8_t)COLOR_EYE);
-            
+
             if (CheckForFilledEdge() == COLOR_NONE)
                 break;
-            
+
             FloodFill(halfX - 2, y, (std::uint8_t)COLOR_NONE);
         }
     }
@@ -192,10 +242,10 @@ void RetroAvatar::EnhanceFace()
                 SetPixel(halfX - 1, y + 1, (std::uint8_t)COLOR_NONE); // Make the eye 2 pixels (at least) high.
 
                 FloodFill(halfX - 1, y, (std::uint8_t)COLOR_EYE);
-                
+
                 if (CheckForFilledEdge() == COLOR_NONE)
                     break;
-                
+
                 FloodFill(halfX - 1, y, (std::uint8_t)COLOR_NONE);
             }
         }

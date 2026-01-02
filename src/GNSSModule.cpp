@@ -98,7 +98,7 @@ void GNSSModule::taskLoop() {
     // Optional: very throttled logging
     if ((int32_t)(nowMs - lastLogMs) >= DEBUG_INTERVAL_MS) {
       lastLogMs = nowMs;
-      Serial.printf("GPS: valid=%d sats=%d chars=%lu pass=%lu fail=%lu\n",
+      Serial.printf("[gps] valid=%d sats=%d chars=%lu pass=%lu fail=%lu\n",
                     (int)gps.location.isValid(),
                     gps.satellites.isValid() ? gps.satellites.value() : 0,
                     (unsigned long)gps.charsProcessed(),
