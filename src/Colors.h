@@ -121,7 +121,7 @@ struct Colors
         ARGB_TO_RGB565(C64_LIGHT_GREY)
     };
 
-    static inline constexpr std::array<std::uint8_t, 28> VendorColorIndices = {
+    static inline constexpr std::array<std::uint8_t, 29> VendorColorIndices = {
         0,  // Unknown
         6,  // Apple          -> C_LIGHT_GREY
         12, // Asus           -> C_BLUE
@@ -140,6 +140,7 @@ struct Colors
         11, // Mercusys       -> C_GREEN
         5,  // Microsoft      -> C_DARK_GREY
         9,  // Mikrotik       -> C_ORANGE
+        12, // Motorola       -> C_BLUE
         13, // Netgear        -> C_LAVENDER
         6,  // RaspberryPi    -> C_LIGHT_GREY
         12, // Qualcomm       -> C_BLUE
