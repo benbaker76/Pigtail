@@ -58,6 +58,28 @@ Use this responsibly and comply with local laws and venue policies. This project
 
 ---
 
+## Controls (M5Cardputer keyboard)
+
+Default navigation (as implemented in the current UIGrid input handling):
+
+- **`,`** : left
+- **`/`** : right
+- **`;`** : up
+- **`.`** : down
+- **Enter** : open detail / confirm
+- **Del / Esc** : go home / back
+- **Esc** : reset (grid mode)
+- **Space** : cycle grid icon mode
+- **`w`**: add to watchlist (eye icon)
+- **`k`**: dump watchlist to `pt_watchlist.kml` file on root of sd card
+
+Navigation behavior:
+- No wrap-around at the edges (left at start does nothing; right at end does nothing).
+- Top/bottom bounds do not wrap to opposite edges.
+- Scrolling occurs by rows when moving off the visible grid.
+
+---
+
 ## UI overview
 
 ### Grid view (main view)
@@ -119,28 +141,6 @@ Watchlisted devices are **persisted to flash memory**, so your selections surviv
 ![](images/watchlist_01.png)
 
 Press **`k`** at any time to export the current watchlist to a KML file written to the **root of the SD card** as **`pt_watchlist.kml`**. This file can be imported into **Google Maps** (for example, via **Google My Maps**) to visualize watchlisted devices that include location data, making it easier to review sightings and map where tracked devices have been observed.
-
----
-
-## Controls (M5Cardputer keyboard)
-
-Default navigation (as implemented in the current UIGrid input handling):
-
-- **`,`** : left
-- **`/`** : right
-- **`;`** : up
-- **`.`** : down
-- **Enter** : open detail / confirm
-- **Del / Esc** : go home / back
-- **Esc** : reset (grid mode)
-- **Space** : cycle grid icon mode
-- **`w`**: add to watchlist (eye icon)
-- **`k`**: dump watchlist to `pt_watchlist.kml` file on root of sd card
-
-Navigation behavior:
-- No wrap-around at the edges (left at start does nothing; right at end does nothing).
-- Top/bottom bounds do not wrap to opposite edges.
-- Scrolling occurs by rows when moving off the visible grid.
 
 ---
 
