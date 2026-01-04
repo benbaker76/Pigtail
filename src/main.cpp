@@ -1,4 +1,6 @@
 #include <M5Cardputer.h>
+#include <SD.h>
+#include <SPIFFS.h>
 
 #include "nvs_flash.h"
 #include "DeviceTracker.h"
@@ -7,7 +9,7 @@
 #include "Logo.h"
 #include "Colors.h"
 
-#define VERSION "1.0.04"
+#define VERSION "1.0.05"
 
 static DeviceTracker g_tracker;
 static UIGrid g_ui(VERSION);
@@ -86,6 +88,19 @@ static inline void PrintHeapTelemetryEvery(uint32_t intervalMs, const char* tag 
     }
 }
 
+bool initStorage() {
+  if (!SPIFFS.begin(true)) {
+    Serial.println("[fs] SPIFFS mount failed");
+  }
+
+  if (!SD.begin(GPIO_NUM_12, SPI, 25000000, "/sd", 1)) {
+    Serial.println("[kml] SD card init failed");
+    return false;
+  }
+
+  return true;
+}
+
 static void toneMs(int f, int ms)
 {
   M5Cardputer.Speaker.tone(f, ms);
@@ -143,20 +158,20 @@ static void drawSplashScreen()
     const int y0 = 0;               // minimize footer overlap
 
     d.startWrite();
-    d.fillScreen(C_BLACK);
+    d.fillScreen(Colors::Pico8Colors[C_BLACK].raw);
 
     // Draw logo as scaled blocks (fast enough at boot, and simplest).
     for (int y = 0; y < logoSrcH; ++y) {
         for (int x = 0; x < logoSrcW; ++x) {
             const uint8_t pi = logoPixelIndex32x32(x, y);
-            const uint16_t c = (uint16_t)Colors::C64Colors[pi]; // your palette is RGB565 values
+            const lgfx::rgb565_t c = Colors::C64Colors[pi]; // your palette is RGB565 values
             d.fillRect(x0 + x * scale, y0 + y * scale, scale, scale, c);
         }
     }
 
     // Footer text (draw over bottom area; unavoidable with 128px logo on 135px display)
     d.setTextSize(1);
-    d.setTextColor(C_WHITE, C_BLACK);
+    d.setTextColor(Colors::Pico8Colors[C_WHITE].raw, Colors::Pico8Colors[C_BLACK].raw);
 
     const char* right = "benbaker76";
 
@@ -177,16 +192,19 @@ static void drawSplashScreen()
 
 void setup() {
   Serial.begin(115200);
+  delay(100);
 
-  // Cardputer init (your established pattern)
+  // Init M5Cardputer hardware
   auto cfg = M5.config();
-  cfg.serial_baudrate = 115200;
-  cfg.fallback_board  = m5::board_t::board_M5Cardputer;
+  M5.begin(cfg);
   M5Cardputer.begin(cfg, true);
   M5Cardputer.Keyboard.begin();
 
-  M5.Display.setRotation(1);
-  M5.Display.setBrightness(128);
+  // Configure G0 button (GPIO0) as input with pullup
+  pinMode(0, INPUT_PULLUP);
+
+  // Disable LoRa GPIO5 to avoid conflicts
+  pinMode(5, INPUT_PULLUP);
 
   const uint32_t t0 = millis();
 
@@ -194,6 +212,10 @@ void setup() {
   drawSplashScreen();
 
   playStartupSound();
+
+  bool sdAvailable = initStorage();
+
+  g_tracker.setSdAvailable(sdAvailable);
 
   // Start GNSS with M5Cardputer CAP LoRa868 GPS configuration
   // Based on the demo, GPS uses:

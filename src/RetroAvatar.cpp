@@ -42,7 +42,7 @@ void RetroAvatar::GenerateAvatar(std::uint32_t id)
     GrowBitmap();
 }
 
-void RetroAvatar::DrawAvatar(ByteGrid& imageData, int offsetX, int offsetY, int scale)
+void RetroAvatar::DrawAvatar(Indexed4bppImage& imageData, int offsetX, int offsetY, int scale)
 {
     // Source is always the avatar grid (fixed size).
     // offsetX/offsetY are the source top-left in _avatarData (same semantics as your current code).

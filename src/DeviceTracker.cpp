@@ -1,6 +1,10 @@
 #include "DeviceTracker.h"
 
 #include <WiFi.h>
+#include <ArduinoJson.h>
+#include <FS.h>
+#include <SD.h>
+#include <SPIFFS.h>
 #include "esp_wifi.h"
 
 #include <NimBLEDevice.h>
@@ -44,6 +48,9 @@ static constexpr uint8_t WIFI_CH_MIN = 1;
 static constexpr uint8_t WIFI_CH_MAX = 11;
 static constexpr int     HOP_MS      = 250;
 
+static constexpr const char* PATH_WATCHLIST_JSON = "/pt_watchlist.json";
+static constexpr const char* PATH_WATCHLIST_KML = "/pt_watchlist.kml";
+
 // ----------------------------- Time helpers -----------------------------
 
 static inline uint64_t now_us() { return (uint64_t)esp_timer_get_time(); }
@@ -82,6 +89,52 @@ static inline void extract_ssid_ie(
   }
 }
 
+static bool macToString(const uint8_t mac[6], char out[18]) {
+  int n = snprintf(out, 18, "%02X:%02X:%02X:%02X:%02X:%02X",
+                   mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+  return n == 17;
+}
+
+static int hexNibble(char c) {
+  if (c >= '0' && c <= '9') return c - '0';
+  if (c >= 'a' && c <= 'f') return 10 + (c - 'a');
+  if (c >= 'A' && c <= 'F') return 10 + (c - 'A');
+  return -1;
+}
+
+// Parses "AA:BB:CC:DD:EE:FF" (also tolerates '-' separators if you want)
+static bool parseMac(const char* s, uint8_t out[6]) {
+  if (!s) return false;
+  for (int i = 0; i < 6; ++i) {
+    int hi = hexNibble(s[i * 3 + 0]);
+    int lo = hexNibble(s[i * 3 + 1]);
+    if (hi < 0 || lo < 0) return false;
+    out[i] = (uint8_t)((hi << 4) | lo);
+    if (i < 5) {
+      char sep = s[i * 3 + 2];
+      if (sep != ':' && sep != '-') return false;
+    }
+  }
+  return true;
+}
+
+static const char* kindToString(EntityKind k) {
+  switch (k) {
+    case EntityKind::WifiAp:     return "WifiAp";
+    case EntityKind::WifiClient: return "WifiClient";
+    case EntityKind::BleAdv:     return "BleAdv";
+    default:                     return "Unknown";
+  }
+}
+
+static bool parseKind(const char* s, EntityKind& out) {
+  if (!s) return false;
+  if (strcmp(s, "WifiAp") == 0)     { out = EntityKind::WifiAp; return true; }
+  if (strcmp(s, "WifiClient") == 0) { out = EntityKind::WifiClient; return true; }
+  if (strcmp(s, "BleAdv") == 0)     { out = EntityKind::BleAdv; return true; }
+  return false;
+}
+
 // ----------------------------- Model -----------------------------
 
 enum class TrackKind : uint8_t { WifiClient = 1, BleAdv = 2 };
@@ -92,6 +145,8 @@ struct Track {
   uint8_t   addr[6]{};
 
   Vendor    vendor = Vendor::Unknown;
+
+  EntityFlags flags = EntityFlags::None;
 
   uint16_t  index = 0;
   uint32_t  first_seen_s = 0;
@@ -109,6 +164,11 @@ struct Track {
 
   float     crowd_ema = 0.0f;
 
+  // Last-seen GPS fix (where YOU were when you last observed this device)
+  uint32_t  last_geo_s = 0;
+  double    last_lat = 0.0;
+  double    last_lon = 0.0;
+
   bool      tracker_like = false; // conservative placeholder
 };
 
@@ -118,6 +178,8 @@ struct Anchor {
 
   Vendor   vendor = Vendor::Unknown;
 
+  EntityFlags flags = EntityFlags::None;
+
   uint8_t  ssid[32]{};
   uint8_t  ssid_len = 0;
 
@@ -125,8 +187,10 @@ struct Anchor {
   int      last_rssi = -100;
   uint32_t last_seen_s = 0;
 
-  // Geo tag
-  bool     has_geo = false;
+  // Last-seen GPS fix (where YOU were when you last observed this AP)
+  uint32_t last_geo_s = 0;
+  double   last_lat = 0.0;
+  double   last_lon = 0.0;
 
   // "best pass" (strongest RSSI) location
   int      best_rssi = -127;
@@ -227,6 +291,7 @@ static Track* find_or_alloc_track(TrackKind kind, const uint8_t addr[6], uint32_
       t.kind = kind;
       memcpy(t.addr, addr, 6);
       t.vendor = GetVendor(addr);
+      t.flags = EntityFlags::None;
       t.index = g_next_index++;
       t.first_seen_s = ts_s;
       t.last_seen_s  = ts_s;
@@ -235,18 +300,26 @@ static Track* find_or_alloc_track(TrackKind kind, const uint8_t addr[6], uint32_
       return &t;
     }
   }
-  // evict oldest
-  int ev = 0;
+  // evict oldest (but never watched)
+  int ev = -1;
   uint32_t oldest = UINT32_MAX;
+
   for (int i = 0; i < MAX_TRACKS; i++) {
-    if (g_tracks[i].in_use && g_tracks[i].last_seen_s < oldest) { oldest = g_tracks[i].last_seen_s; ev = i; }
+    if (!g_tracks[i].in_use) continue;
+    if (HasFlag(g_tracks[i].flags, EntityFlags::Watching)) continue;
+
+    if (g_tracks[i].last_seen_s < oldest) { oldest = g_tracks[i].last_seen_s; ev = i; }
   }
+
+  if (ev < 0) return nullptr;
+
   Track& t = g_tracks[ev];
   t = Track{};
   t.in_use = true;
   t.kind = kind;
   memcpy(t.addr, addr, 6);
   t.vendor = GetVendor(addr);
+  t.flags = EntityFlags::None;
   t.index = g_next_index++;
   t.first_seen_s = ts_s;
   t.last_seen_s  = ts_s;
@@ -267,23 +340,32 @@ static Anchor* find_or_alloc_anchor(const uint8_t bssid[6], uint32_t ts_s) {
       a.in_use = true;
       memcpy(a.addr, bssid, 6);
       a.vendor = GetVendor(bssid);
+      a.flags = EntityFlags::None;
       a.index = g_next_index++;
       a.last_seen_s = ts_s;
       a.last_rssi = -100;
       return &a;
     }
   }
-  // evict oldest
-  int ev = 0;
+  // evict oldest (but never watched)
+  int ev = -1;
   uint32_t oldest = UINT32_MAX;
+
   for (int i = 0; i < MAX_ANCHORS; i++) {
-    if (g_anchors[i].in_use && g_anchors[i].last_seen_s < oldest) { oldest = g_anchors[i].last_seen_s; ev = i; }
+    if (!g_anchors[i].in_use) continue;
+    if (HasFlag(g_anchors[i].flags, EntityFlags::Watching)) continue;
+
+    if (g_anchors[i].last_seen_s < oldest) { oldest = g_anchors[i].last_seen_s; ev = i; }
   }
+
+  if (ev < 0) return nullptr;
+
   Anchor& a = g_anchors[ev];
   a = Anchor{};
   a.in_use = true;
   memcpy(a.addr, bssid, 6);
   a.vendor = GetVendor(bssid);
+  a.flags = EntityFlags::None;
   a.index = g_next_index++;
   a.last_seen_s = ts_s;
   a.last_rssi = -100;
@@ -332,7 +414,7 @@ static EnvFingerprint build_fingerprint(uint32_t ts_s) {
     if (n >= MAX_ANCHORS) break;
   }
 
-  std::sort(tmp, tmp + n, [](const Tmp& a, const Tmp& b){ return a.rssi > b.rssi; });
+  std::sort(tmp, tmp + n, [](const Tmp& a, const Tmp& b) { return a.rssi > b.rssi; });
 
   EnvFingerprint fp{};
   fp.count = std::min(n, FP_TOP_N);
@@ -433,16 +515,40 @@ static void expire_tables(uint32_t ts_s) {
 
   for (int i = 0; i < MAX_TRACKS; i++) {
     if (!g_tracks[i].in_use) continue;
+
+    if (HasFlag(g_tracks[i].flags, EntityFlags::Watching))
+      continue; // watched persists
+
     uint32_t idle = ts_s - g_tracks[i].last_seen_s;
     uint32_t limit = (g_tracks[i].kind == TrackKind::WifiClient) ? TRACK_IDLE_SEC_WIFI : TRACK_IDLE_SEC_BLE;
     if (idle > limit) g_tracks[i].in_use = false;
   }
+
   for (int i = 0; i < MAX_ANCHORS; i++) {
     if (!g_anchors[i].in_use) continue;
-    if (ts_s - g_anchors[i].last_seen_s > (uint32_t)ANCHOR_IDLE_SEC) g_anchors[i].in_use = false;
+
+    if (HasFlag(g_anchors[i].flags, EntityFlags::Watching))
+      continue; // watched persists
+
+    if (ts_s - g_anchors[i].last_seen_s > (uint32_t)ANCHOR_IDLE_SEC)
+      g_anchors[i].in_use = false;
   }
 
   portEXIT_CRITICAL(&g_lock);
+}
+
+static inline float geo_weight_from_rssi(int rssi_dbm) {
+  // map RSSI (-95..-35) => weight (1..10)
+  return 1.0f + 9.0f * clamp01(((float)rssi_dbm + 95.0f) / 60.0f);
+}
+
+static inline void stamp_last_geo(EntityFlags& flags, uint32_t& last_geo_s, double& last_lat, double& last_lon,
+                                  uint32_t ts_s, double gps_lat, double gps_lon)
+{
+  flags |= EntityFlags::HasGeo;
+  last_geo_s = ts_s;
+  last_lat = gps_lat;
+  last_lon = gps_lon;
 }
 
 static void process_observation(const Observation& obs) {
@@ -460,21 +566,35 @@ static void process_observation(const Observation& obs) {
   const double gps_lat = g_gps_lat;
   const double gps_lon = g_gps_lon;
 
-  switch (obs.kind) {
+    switch (obs.kind) {
     case ObsKind::WifiProbeReq: {
       Track* t = find_or_alloc_track(TrackKind::WifiClient, obs.addr, obs.ts_s);
+      if (!t) break;
       update_track_from_obs(*t, obs.rssi_dbm, obs.ts_s);
+
+      // NEW: stamp last-seen GPS into the Track
+      if (gps_valid) {
+        stamp_last_geo(t->flags, t->last_geo_s, t->last_lat, t->last_lon,
+                       obs.ts_s, gps_lat, gps_lon);
+      }
     } break;
 
     case ObsKind::BleAdv: {
       Track* t = find_or_alloc_track(TrackKind::BleAdv, obs.addr, obs.ts_s);
+      if (!t) break;
       update_track_from_obs(*t, obs.rssi_dbm, obs.ts_s);
-      // tracker_like stays conservative false until you add a classifier
+
+      // NEW: stamp last-seen GPS into the Track
+      if (gps_valid) {
+        stamp_last_geo(t->flags, t->last_geo_s, t->last_lat, t->last_lon,
+                       obs.ts_s, gps_lat, gps_lon);
+      }
     } break;
 
     case ObsKind::WifiApBeacon:
     case ObsKind::WifiApProbeResp: {
       Anchor* a = find_or_alloc_anchor(obs.addr, obs.ts_s);
+      if (!a) break;
       a->last_seen_s = obs.ts_s;
       a->last_rssi   = obs.rssi_dbm;
 
@@ -484,26 +604,28 @@ static void process_observation(const Observation& obs) {
         if (ncopy) memcpy(a->ssid, obs.ssid, ncopy);
       }
 
-      // If GPS fix available, geo-tag this anchor
-      if (g_gps_valid) {
-        // best-pass update
-        if (!a->has_geo || obs.rssi_dbm > a->best_rssi) {
-          a->has_geo = true;
+      if (gps_valid) {
+        const bool hadGeo = HasFlag(a->flags, EntityFlags::HasGeo);
+
+        stamp_last_geo(a->flags, a->last_geo_s, a->last_lat, a->last_lon,
+                      obs.ts_s, gps_lat, gps_lon);
+
+        // best pass
+        if (!hadGeo || obs.rssi_dbm > a->best_rssi) {
           a->best_rssi = obs.rssi_dbm;
-          a->best_lat = gps_lat;
-          a->best_lon = gps_lon;
+          a->best_lat  = gps_lat;
+          a->best_lon  = gps_lon;
         }
 
-        // weighted average (favor stronger signals)
-        // map RSSI (-95..-35) => weight (1..10)
-        float w = 1.0f + 9.0f * clamp01(((float)obs.rssi_dbm + 95.0f) / 60.0f);
+        // weighted avg
+        float w = geo_weight_from_rssi(obs.rssi_dbm);
         a->w_sum += (double)w;
         a->w_lat += (double)w * gps_lat;
         a->w_lon += (double)w * gps_lon;
-        a->has_geo = true;
       }
     } break;
   }
+
   portEXIT_CRITICAL(&g_lock);
 }
 
@@ -774,13 +896,17 @@ static void start_tasks() {
 
 bool DeviceTracker::begin() {
   Serial.println("DeviceTracker starting...");
-  //g_salt ^= (uint64_t)esp_timer_get_time();
 
   init_obs_queue();
   if (!g_obs_q) return false;
 
   init_wifi_sniffer();
   init_ble_scan();
+
+  readWatchlist();
+
+  //dumpWatchlistFile();
+  //outputLists();
 
   start_tasks();
 
@@ -819,6 +945,7 @@ int DeviceTracker::buildSnapshot(EntityView* out, int maxOut, float stationary_r
     e.index = t.index;
     memcpy(e.addr, t.addr, 6);
     e.vendor = t.vendor;
+    e.flags = t.flags;
     e.rssi = (int)lroundf(t.ema_rssi);
     e.age_s = (t.last_seen_s - t.first_seen_s);
     e.last_seen_s = t.last_seen_s;
@@ -828,6 +955,10 @@ int DeviceTracker::buildSnapshot(EntityView* out, int maxOut, float stationary_r
     e.crowd = t.crowd_ema;
     e.score = score_track(t, stationary_ratio);
     e.tracker_like = t.tracker_like;
+    if (HasFlag(t.flags, EntityFlags::HasGeo)) {
+      e.lat = t.last_lat;
+      e.lon = t.last_lon;
+    }
 
     out[n++] = e;
   }
@@ -842,6 +973,7 @@ int DeviceTracker::buildSnapshot(EntityView* out, int maxOut, float stationary_r
     e.index = a.index;
     memcpy(e.addr, a.addr, 6);
     e.vendor = a.vendor;
+    e.flags = a.flags;
     e.ssid_len = std::min<uint8_t>(a.ssid_len, sizeof(e.ssid));
     if (e.ssid_len) memcpy(e.ssid, a.ssid, e.ssid_len);
     e.rssi = a.last_rssi;
@@ -851,8 +983,8 @@ int DeviceTracker::buildSnapshot(EntityView* out, int maxOut, float stationary_r
     e.score = 0.0f;           // anchors not “suspicious” by default
     e.tracker_like = false;
 
-    e.has_geo = a.has_geo;
-    if (a.has_geo) {
+    e.flags = a.flags;
+    if (HasFlag(a.flags, EntityFlags::HasGeo)) {
       // Prefer weighted average if it has enough samples, else best-pass
       if (a.w_sum >= 3.0) {
         e.lat = a.w_lat / a.w_sum;
@@ -869,8 +1001,13 @@ int DeviceTracker::buildSnapshot(EntityView* out, int maxOut, float stationary_r
   portEXIT_CRITICAL(&g_lock);
 
   std::sort(out, out + n, [](const EntityView& a, const EntityView& b) {
+    bool a_watched = HasFlag(a.flags, EntityFlags::Watching);
+    bool b_watched = HasFlag(b.flags, EntityFlags::Watching);
+
+    if (a_watched != b_watched) return a_watched > b_watched;
     if (a.score != b.score) return a.score > b.score;
-    return a.rssi > b.rssi;
+    if (a.rssi != b.rssi) return a.rssi > b.rssi;
+    return a.index < b.index;
   });
 
   _segment_id = g_segment_id;
@@ -880,31 +1017,102 @@ int DeviceTracker::buildSnapshot(EntityView* out, int maxOut, float stationary_r
   return n;
 }
 
+void DeviceTracker::updateEntity(const EntityView* in)
+{
+  portENTER_CRITICAL(&g_lock);
+
+  if (in->kind == EntityKind::WifiAp)
+  {
+    for (int i = 0; i < MAX_ANCHORS; ++i) {
+      if (!g_anchors[i].in_use) continue;
+      if (g_anchors[i].index != in->index) continue;
+
+      if (HasFlag(in->flags, EntityFlags::Watching))
+        SetFlag(g_anchors[i].flags, EntityFlags::Watching);
+      else
+        ClearFlag(g_anchors[i].flags, EntityFlags::Watching);
+
+      portEXIT_CRITICAL(&g_lock);
+      return;
+    }
+  }
+  else
+  {
+    for (int i = 0; i < MAX_TRACKS; ++i) {
+      if (!g_tracks[i].in_use) continue;
+      if (g_tracks[i].index != in->index) continue;
+
+      if (HasFlag(in->flags, EntityFlags::Watching))
+        SetFlag(g_tracks[i].flags, EntityFlags::Watching);
+      else
+        ClearFlag(g_tracks[i].flags, EntityFlags::Watching);
+
+      portEXIT_CRITICAL(&g_lock);
+      return;
+    }
+  }
+
+  portEXIT_CRITICAL(&g_lock);
+}
+
 void DeviceTracker::reset()
 {
   // Clear pending observations so we don't immediately repopulate from old data.
+  // NOTE: This may race with ISR producers; if you see issues, consider gating producers
+  // with a global "paused" flag checked before xQueueSend*.
   if (g_obs_q) {
     xQueueReset(g_obs_q);
   }
 
   portENTER_CRITICAL(&g_lock);
 
-  // Clear tracked state
-  memset(g_tracks,  0, sizeof(g_tracks));
-  memset(g_anchors, 0, sizeof(g_anchors));
-  g_next_index = 1;
+  // 1) Clear non-watched tracks/anchors in-place (O(1) extra memory)
+  for (int i = 0; i < MAX_TRACKS; ++i) {
+    if (!g_tracks[i].in_use) continue;
 
-  // Reset env segmentation / movement stats
+    if (HasFlag(g_tracks[i].flags, EntityFlags::Watching)) {
+      // Leave watched tracks untouched
+      continue;
+    }
+
+    // Fully clear the slot
+    g_tracks[i] = Track{};
+  }
+
+  for (int i = 0; i < MAX_ANCHORS; ++i) {
+    if (!g_anchors[i].in_use) continue;
+
+    if (HasFlag(g_anchors[i].flags, EntityFlags::Watching)) {
+      // Leave watched anchors untouched
+      continue;
+    }
+
+    g_anchors[i] = Anchor{};
+  }
+
+  // 2) Recompute g_next_index so we don't collide with preserved watched entities.
+  //    (Preserves stable indices for watched entities.)
+  uint16_t maxIdx = 0;
+  for (int i = 0; i < MAX_TRACKS; ++i) {
+    if (g_tracks[i].in_use) maxIdx = std::max<uint16_t>(maxIdx, g_tracks[i].index);
+  }
+  for (int i = 0; i < MAX_ANCHORS; ++i) {
+    if (g_anchors[i].in_use) maxIdx = std::max<uint16_t>(maxIdx, g_anchors[i].index);
+  }
+  g_next_index = (uint16_t)(maxIdx + 1);
+  if (g_next_index == 0) g_next_index = 1; // paranoia if maxIdx was 0xFFFF
+
+  // 3) Reset env segmentation / movement stats (as before)
   g_last_fp = EnvFingerprint{};
   g_last_env_tick_s = 0;
   g_segment_id = 1;
   g_move_segments = 0;
 
-  // Reset crowd window
+  // 4) Reset crowd window (as before)
   g_current_window = 0;
   g_window_unique_hits = 0;
 
-  // Reset GPS segmentation anchor (keep current GPS fix validity as-is)
+  // 5) Reset GPS segmentation anchor (keep current GPS fix validity as-is)
   g_gps_anchor_valid = false;
   g_last_gps_seg_s = 0;
 
@@ -914,4 +1122,529 @@ void DeviceTracker::reset()
   _segment_id = g_segment_id;
   _move_segments = g_move_segments;
   _last_env_tick_s = g_last_env_tick_s;
+}
+
+bool DeviceTracker::readWatchlist()
+{
+  fs::FS& fs = SPIFFS;
+
+  File f = fs.open(PATH_WATCHLIST_JSON, FILE_READ);
+  if (!f) {
+    Serial.printf("[watchlist] no file: %s\n", PATH_WATCHLIST_JSON);
+    return false;
+  }
+
+  if (f.size() == 0) {  // helps explain the earlier EmptyInput case
+    Serial.printf("[watchlist] file is empty: %s\n", PATH_WATCHLIST_JSON);
+    f.close();
+    return false;
+  }
+
+  JsonDocument doc;
+  DeserializationError err = deserializeJson(doc, f);
+  f.close();
+
+  if (err) {
+    Serial.printf("[watchlist] JSON parse failed: %s\n", err.c_str());
+    return false;
+  }
+
+  JsonArray items = doc["items"].as<JsonArray>();
+  if (items.isNull()) {
+    Serial.println("[watchlist] missing 'items'");
+    return false;
+  }
+
+  const uint32_t ts = now_s();
+
+  uint32_t applied = 0;
+  uint32_t skipped = 0;
+
+  portENTER_CRITICAL(&g_lock);
+
+  for (JsonVariant v : items) {
+    JsonObject it = v.as<JsonObject>();
+    if (it.isNull()) {
+      skipped++;
+      continue;
+    }
+    const char* kindStr = it["kind"].as<const char*>();
+    const char* macStr  = it["mac"].as<const char*>();
+
+    EntityKind ek;
+    uint8_t mac[6]{};
+    if (!kindStr || !macStr || !parseKind(kindStr, ek) || !parseMac(macStr, mac)) {
+      skipped++;
+      continue;
+    }
+
+    if (ek == EntityKind::WifiAp) {
+      Anchor* a = nullptr;
+
+      for (int i = 0; i < MAX_ANCHORS; ++i) {
+        if (g_anchors[i].in_use && memcmp(g_anchors[i].addr, mac, 6) == 0) { a = &g_anchors[i]; break; }
+      }
+
+      if (!a) {
+        for (int i = 0; i < MAX_ANCHORS; ++i) {
+          if (!g_anchors[i].in_use) {
+            Anchor& na = g_anchors[i];
+            na = Anchor{};
+            na.in_use = true;
+            memcpy(na.addr, mac, 6);
+            na.vendor = GetVendor(mac);
+            na.flags  = EntityFlags::None;
+            na.index  = g_next_index++;
+            na.last_seen_s = ts;
+            na.last_rssi   = -95; // more “display-friendly” than -100
+            a = &na;
+            break;
+          }
+        }
+      }
+
+      if (!a) { skipped++; continue; }
+
+      a->flags |= EntityFlags::Watching;
+
+      // Restore SSID (optional, see writeWatchlist changes below)
+      if (it["ssid"].is<const char*>()) {
+        const char* ss = it["ssid"];
+        size_t n = std::min<size_t>(strlen(ss), sizeof(a->ssid));
+        a->ssid_len = (uint8_t)n;
+        if (n) memcpy(a->ssid, ss, n);
+      }
+
+      if (it["lat"].is<double>() && it["lon"].is<double>()) {
+        a->best_lat  = (double)it["lat"];
+        a->best_lon  = (double)it["lon"];
+        a->best_rssi = -127;
+        a->w_sum = 0.0; a->w_lat = 0.0; a->w_lon = 0.0;
+        a->flags |= EntityFlags::HasGeo;
+      }
+
+      applied++;
+    }
+    else {
+      TrackKind tk = (ek == EntityKind::BleAdv) ? TrackKind::BleAdv : TrackKind::WifiClient;
+      Track* t = nullptr;
+
+      for (int i = 0; i < MAX_TRACKS; ++i) {
+        if (g_tracks[i].in_use && g_tracks[i].kind == tk && memcmp(g_tracks[i].addr, mac, 6) == 0) { t = &g_tracks[i]; break; }
+      }
+
+      if (!t) {
+        for (int i = 0; i < MAX_TRACKS; ++i) {
+          if (!g_tracks[i].in_use) {
+            Track& nt = g_tracks[i];
+            nt = Track{};
+            nt.in_use = true;
+            nt.kind   = tk;
+            memcpy(nt.addr, mac, 6);
+            nt.vendor = GetVendor(mac);
+            nt.flags  = EntityFlags::None;
+            nt.index  = g_next_index++;
+            nt.first_seen_s = ts;
+            nt.last_seen_s  = ts;
+            nt.ema_rssi     = -95.0f; // helps if UI hides “unknown” RSSI
+            t = &nt;
+            if (it["lat"].is<double>() && it["lon"].is<double>()) {
+              t->last_lat = (double)it["lat"];
+              t->last_lon = (double)it["lon"];
+              t->last_geo_s = ts; // “restored at boot” timestamp; optional
+              t->flags |= EntityFlags::HasGeo;
+            }
+            break;
+          }
+        }
+      }
+
+      if (!t) { skipped++; continue; }
+
+      t->flags |= EntityFlags::Watching;
+      applied++;
+    }
+  }
+
+  // Fix next index
+  uint16_t maxIdx = 0;
+  for (int i = 0; i < MAX_TRACKS; ++i)  if (g_tracks[i].in_use)  maxIdx = std::max<uint16_t>(maxIdx, g_tracks[i].index);
+  for (int i = 0; i < MAX_ANCHORS; ++i) if (g_anchors[i].in_use) maxIdx = std::max<uint16_t>(maxIdx, g_anchors[i].index);
+  g_next_index = (uint16_t)(maxIdx + 1);
+  if (g_next_index == 0) g_next_index = 1;
+
+  portEXIT_CRITICAL(&g_lock);
+
+  Serial.printf("[watchlist] json=%u applied=%u skipped=%u\n",
+                (unsigned)items.size(), (unsigned)applied, (unsigned)skipped);
+
+  return applied > 0;
+}
+
+void DeviceTracker::dumpWatchlistFile() {
+  fs::FS& fs = SPIFFS;
+  File f = fs.open(PATH_WATCHLIST_JSON, FILE_READ);
+  if (!f) { Serial.println("[watchlist] dump: open failed"); return; }
+  Serial.println("[watchlist] dump begin");
+  while (f.available()) Serial.write(f.read());
+  Serial.println("\n[watchlist] dump end");
+  f.close();
+}
+
+void DeviceTracker::outputLists()
+{
+  portENTER_CRITICAL(&g_lock);
+  for (int i=0;i<MAX_TRACKS;i++) {
+    if (g_tracks[i].in_use && HasFlag(g_tracks[i].flags, EntityFlags::Watching)) {
+      char mac[18]; macToString(g_tracks[i].addr, mac);
+      Serial.printf("[watch] Track kind=%d idx=%u mac=%s flags=0x%X\n",
+        (int)g_tracks[i].kind, g_tracks[i].index, mac, (unsigned)g_tracks[i].flags);
+    }
+  }
+  for (int i=0;i<MAX_ANCHORS;i++) {
+    if (g_anchors[i].in_use && HasFlag(g_anchors[i].flags, EntityFlags::Watching)) {
+      char mac[18]; macToString(g_anchors[i].addr, mac);
+      Serial.printf("[watch] Anchor idx=%u mac=%s ssid_len=%u flags=0x%X\n",
+        g_anchors[i].index, mac, g_anchors[i].ssid_len, (unsigned)g_anchors[i].flags);
+    }
+  }
+  portEXIT_CRITICAL(&g_lock);
+}
+
+bool DeviceTracker::writeWatchlist()
+{
+  fs::FS& fs = SPIFFS;
+
+  auto printJsonEscaped = [](Print& p, const uint8_t* s, size_t n) {
+    for (size_t i = 0; i < n; ++i) {
+      unsigned char c = s[i];
+      switch (c) {
+        case '\\': p.print("\\\\"); break;
+        case '\"': p.print("\\\""); break;
+        case '\n': p.print("\\n"); break;
+        case '\r': p.print("\\r"); break;
+        case '\t': p.print("\\t"); break;
+        default:
+          if (c < 0x20) { /* drop */ }
+          else p.print((char)c);
+          break;
+      }
+    }
+  };
+
+  // Temp then rename (your atomic-ish write)
+  File f = fs.open(PATH_WATCHLIST_JSON, FILE_WRITE);
+  if (!f) {
+    Serial.printf("[watchlist] open failed: %s\n", PATH_WATCHLIST_JSON);
+    return false;
+  }
+
+  f.print("{\"version\":1,\"items\":[");
+  bool first = true;
+
+  // ---------- Anchors ----------
+  for (int i = 0; i < MAX_ANCHORS; ++i) {
+    // Small per-item snapshot
+    bool in_use = false;
+    bool watching = false;
+    uint8_t mac[6]{};
+    uint8_t ssid[32]{};
+    uint8_t ssid_len = 0;
+    bool hasGeo = false;
+    double lat = 0.0, lon = 0.0;
+
+    // Snapshot under lock
+    portENTER_CRITICAL(&g_lock);
+    if (g_anchors[i].in_use) {
+      in_use = true;
+      watching = HasFlag(g_anchors[i].flags, EntityFlags::Watching);
+      if (watching) {
+        memcpy(mac, g_anchors[i].addr, 6);
+
+        ssid_len = std::min<uint8_t>(g_anchors[i].ssid_len, (uint8_t)sizeof(ssid));
+        if (ssid_len) memcpy(ssid, g_anchors[i].ssid, ssid_len);
+
+        hasGeo = HasFlag(g_anchors[i].flags, EntityFlags::HasGeo);
+        if (hasGeo) {
+          if (g_anchors[i].w_sum >= 3.0) {
+            lat = g_anchors[i].w_lat / g_anchors[i].w_sum;
+            lon = g_anchors[i].w_lon / g_anchors[i].w_sum;
+          } else {
+            lat = g_anchors[i].best_lat;
+            lon = g_anchors[i].best_lon;
+          }
+        }
+      }
+    }
+    portEXIT_CRITICAL(&g_lock);
+
+    if (!in_use || !watching) continue;
+
+    char macStr[18];
+    if (!macToString(mac, macStr)) continue;
+
+    if (!first) f.print(",");
+    first = false;
+
+    f.print("{\"kind\":\"WifiAp\",\"mac\":\"");
+    f.print(macStr);
+    f.print("\"");
+
+    if (ssid_len > 0) {
+      f.print(",\"ssid\":\"");
+      printJsonEscaped(f, ssid, ssid_len);
+      f.print("\"");
+    }
+
+    if (hasGeo) {
+      f.print(",\"lat\":"); f.print(lat, 8);
+      f.print(",\"lon\":"); f.print(lon, 8);
+    }
+
+    f.print("}");
+  }
+
+  // ---------- Tracks ----------
+  for (int i = 0; i < MAX_TRACKS; ++i) {
+    bool in_use = false;
+    bool watching = false;
+    TrackKind tk{};
+    uint8_t mac[6]{};
+    bool hasGeo = false;
+    double lat = 0.0, lon = 0.0;
+
+    portENTER_CRITICAL(&g_lock);
+    if (g_tracks[i].in_use) {
+      in_use = true;
+      watching = HasFlag(g_tracks[i].flags, EntityFlags::Watching);
+      if (watching) {
+        tk = g_tracks[i].kind;
+        memcpy(mac, g_tracks[i].addr, 6);
+
+        hasGeo = HasFlag(g_tracks[i].flags, EntityFlags::HasGeo);
+        if (hasGeo) {
+          lat = g_tracks[i].last_lat;
+          lon = g_tracks[i].last_lon;
+        }
+      }
+    }
+    portEXIT_CRITICAL(&g_lock);
+
+    if (!in_use || !watching) continue;
+
+    char macStr[18];
+    if (!macToString(mac, macStr)) continue;
+
+    if (!first) f.print(",");
+    first = false;
+
+    const char* kindStr = (tk == TrackKind::BleAdv) ? "BleAdv" : "WifiClient";
+
+    f.print("{\"kind\":\"");
+    f.print(kindStr);
+    f.print("\",\"mac\":\"");
+    f.print(macStr);
+    f.print("\"");
+
+    if (hasGeo) {
+      f.print(",\"lat\":"); f.print(lat, 8);
+      f.print(",\"lon\":"); f.print(lon, 8);
+    }
+
+    f.print("}");
+  }
+
+  f.print("]}");
+  f.close();
+
+  Serial.printf("[watchlist] wrote %s\n", PATH_WATCHLIST_JSON);
+  return true;
+}
+
+static void printXmlEscaped(Print& p, const char* s) {
+  if (!s) return;
+  for (; *s; ++s) {
+    switch (*s) {
+      case '&':  p.print("&amp;");  break;
+      case '<':  p.print("&lt;");   break;
+      case '>':  p.print("&gt;");   break;
+      case '"':  p.print("&quot;"); break;
+      case '\'': p.print("&apos;"); break;
+      default:   p.print(*s);       break;
+    }
+  }
+}
+
+bool DeviceTracker::writeWatchlistKml()
+{
+  if (!_sdAvailable) {
+    Serial.println("[kml] SD card not available");
+    return false;
+  }
+
+  fs::FS* fs = static_cast<fs::FS*>(&SD);
+
+  // Overwrite existing file directly
+  File f = fs->open(PATH_WATCHLIST_KML, FILE_WRITE);
+  if (!f) {
+    Serial.printf("[kml] open failed: %s\n", PATH_WATCHLIST_KML);
+    SD.end();
+    return false;
+  }
+
+  // Header
+  f.print("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
+  f.print("<kml xmlns=\"http://www.opengis.net/kml/2.2\">\n");
+  f.print("  <Document>\n");
+  f.print("    <name>PT Watchlist</name>\n");
+
+  bool wroteAny = false;
+
+  // ---------------- Anchors (WiFi APs) ----------------
+  for (int i = 0; i < MAX_ANCHORS; ++i) {
+    bool in_use = false, watching = false, hasGeo = false;
+    uint8_t mac[6]{};
+    uint8_t ssid[32]{};
+    uint8_t ssid_len = 0;
+    double lat = 0.0, lon = 0.0;
+
+    // Snapshot under lock
+    portENTER_CRITICAL(&g_lock);
+    if (g_anchors[i].in_use) {
+      in_use   = true;
+      watching = HasFlag(g_anchors[i].flags, EntityFlags::Watching);
+      hasGeo   = HasFlag(g_anchors[i].flags, EntityFlags::HasGeo);
+
+      if (watching && hasGeo) {
+        memcpy(mac, g_anchors[i].addr, 6);
+
+        ssid_len = std::min<uint8_t>(g_anchors[i].ssid_len, (uint8_t)sizeof(ssid));
+        if (ssid_len) memcpy(ssid, g_anchors[i].ssid, ssid_len);
+
+        // Prefer your "display" location
+        if (g_anchors[i].w_sum >= 3.0) {
+          lat = g_anchors[i].w_lat / g_anchors[i].w_sum;
+          lon = g_anchors[i].w_lon / g_anchors[i].w_sum;
+        } else {
+          lat = g_anchors[i].best_lat;
+          lon = g_anchors[i].best_lon;
+        }
+      }
+    }
+    portEXIT_CRITICAL(&g_lock);
+
+    if (!in_use || !watching || !hasGeo) continue;
+
+    char macStr[18];
+    if (!macToString(mac, macStr)) continue;
+
+    char ssidStr[33]{0};
+    if (ssid_len > 0) {
+      size_t n = std::min<size_t>(ssid_len, 32);
+      memcpy(ssidStr, ssid, n);
+      ssidStr[n] = 0;
+    }
+
+    f.print("    <Placemark>\n");
+    f.print("      <name>");
+    if (ssid_len > 0) {
+      printXmlEscaped(f, ssidStr);
+      f.print(" (");
+      f.print(macStr);
+      f.print(")");
+    } else {
+      f.print(macStr);
+    }
+    f.print("</name>\n");
+
+    f.print("      <description>");
+    f.print("Kind: WifiAp&#10;MAC: ");
+    f.print(macStr);
+    if (ssid_len > 0) {
+      f.print("&#10;SSID: ");
+      printXmlEscaped(f, ssidStr);
+    }
+    f.print("</description>\n");
+
+    f.print("      <Point>\n");
+    f.print("        <coordinates>");
+    // KML coordinates are lon,lat,alt
+    f.print(lon, 8);
+    f.print(",");
+    f.print(lat, 8);
+    f.print(",0</coordinates>\n");
+    f.print("      </Point>\n");
+    f.print("    </Placemark>\n");
+
+    wroteAny = true;
+  }
+
+  // ---------------- Tracks (WiFi clients / BLE) ----------------
+  for (int i = 0; i < MAX_TRACKS; ++i) {
+    bool in_use = false, watching = false, hasGeo = false;
+    TrackKind tk{};
+    uint8_t mac[6]{};
+    double lat = 0.0, lon = 0.0;
+
+    portENTER_CRITICAL(&g_lock);
+    if (g_tracks[i].in_use) {
+      in_use   = true;
+      watching = HasFlag(g_tracks[i].flags, EntityFlags::Watching);
+      hasGeo   = HasFlag(g_tracks[i].flags, EntityFlags::HasGeo);
+
+      if (watching && hasGeo) {
+        tk = g_tracks[i].kind;
+        memcpy(mac, g_tracks[i].addr, 6);
+        lat = g_tracks[i].last_lat;
+        lon = g_tracks[i].last_lon;
+      }
+    }
+    portEXIT_CRITICAL(&g_lock);
+
+    if (!in_use || !watching || !hasGeo) continue;
+
+    char macStr[18];
+    if (!macToString(mac, macStr)) continue;
+
+    const char* kindStr = (tk == TrackKind::BleAdv) ? "BleAdv" : "WifiClient";
+
+    f.print("    <Placemark>\n");
+    f.print("      <name>");
+    f.print(kindStr);
+    f.print(" ");
+    f.print(macStr);
+    f.print("</name>\n");
+
+    f.print("      <description>");
+    f.print("Kind: ");
+    f.print(kindStr);
+    f.print("&#10;MAC: ");
+    f.print(macStr);
+    f.print("</description>\n");
+
+    f.print("      <Point>\n");
+    f.print("        <coordinates>");
+    f.print(lon, 8);
+    f.print(",");
+    f.print(lat, 8);
+    f.print(",0</coordinates>\n");
+    f.print("      </Point>\n");
+    f.print("    </Placemark>\n");
+
+    wroteAny = true;
+  }
+
+  // Footer
+  f.print("  </Document>\n");
+  f.print("</kml>\n");
+
+  // Ensure bytes hit the card before close (close typically flushes, but this is explicit)
+  f.flush();
+  f.close();
+
+  Serial.printf("[kml] wrote %s (%s)\n", PATH_WATCHLIST_KML, wroteAny ? "with placemarks" : "no geo items");
+
+  SD.end();
+
+  return true;
 }

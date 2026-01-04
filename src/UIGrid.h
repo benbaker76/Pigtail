@@ -35,12 +35,10 @@ private:
   static constexpr int ROWS  = 4;
   static constexpr int SLOTS = COLS * ROWS;
   static constexpr int TILE  = 32;
-
   // Sprite
   void createSprite();
   void destroySprite();
   void pushFrame();
-
   // Drawing
   void drawGrid();
   void drawDetail();
@@ -50,12 +48,15 @@ private:
   // Icon rendering
   void renderGridIconToSprite(int dstX, int dstY, const EntityView& e);
   void renderDetailAvatar48(int dstX, int dstY, uint32_t id);
-  void renderIcon16ToSprite(int dstX, int dstY, const uint8_t* iconData, uint8_t picoColorIndex);
+  void renderIcon1bit16(int dstX, int dstY, const uint8_t* iconData, uint8_t picoColorIndex);
 
   // Selection / navigation
   void setSelectionSlot(int slot);
   void syncSelectionToId();
   void lockDetailToSelection();
+  EntityView* getGridEntity();
+  EntityView* getDetailEntity();
+  EntityView* getSelectedEntity();
   void nav(int dx, int dy);
   void toggleGridIconMode();
 
@@ -100,6 +101,5 @@ private:
   bool _sprInit = false;
   int  _w = 0;
   int  _h = 0;
-  uint8_t* _buf8 = nullptr; // RGB332 sprite buffer
-  ByteGrid _grid;
+  Indexed4bppImage _grid;
 };

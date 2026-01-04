@@ -57,76 +57,11 @@ namespace
     for (char& c : s) c = (char)std::toupper((unsigned char)c);
     return s;
   }
-
-  // RGB565 -> RGB332
-  static inline uint8_t rgb565_to_rgb332(uint16_t c)
-  {
-    const uint8_t r5 = (c >> 11) & 0x1F;
-    const uint8_t g6 = (c >> 5)  & 0x3F;
-    const uint8_t b5 = (c >> 0)  & 0x1F;
-
-    const uint8_t r3 = r5 >> 2;   // 5->3
-    const uint8_t g3 = g6 >> 3;   // 6->3
-    const uint8_t b2 = b5 >> 3;   // 5->2
-
-    return (uint8_t)((r3 << 5) | (g3 << 2) | b2);
-  }
-
-  static std::array<uint8_t, 16> BuildPico332()
-  {
-    std::array<uint8_t, 16> t{};
-    for (size_t i = 0; i < 16; ++i)
-      t[i] = rgb565_to_rgb332(Colors::Pico8Colors[i]);
-    return t;
-  }
-
-  static const std::array<uint8_t, 16> g_pico332 = BuildPico332();
-
-  // Access Icon's rendered indexed pixels (palette indices 0..15).
-  // Requires Icon.h to expose Pixels(), ImageW(), ImageH().
-  static const uint8_t* GetIconPixels32(const Icon& icon, int& outW, int& outH)
-  {
-    outW = icon.ImageW();
-    outH = icon.ImageH();
-    return icon.Pixels().data();
-  }
-
-  // Blit indexed (0..15) to 8-bit RGB332 sprite.
-  static inline void blitIndexedToSprite8(
-    uint8_t* dst8, int dstW, int dstH,
-    int dstX, int dstY,
-    const uint8_t* srcIdx, int srcW, int srcH,
-    const std::array<uint8_t,16>& pal332
-  )
-  {
-    if (!dst8 || !srcIdx) return;
-
-    const int x0 = std::max(0, dstX);
-    const int y0 = std::max(0, dstY);
-    const int x1 = std::min(dstW, dstX + srcW);
-    const int y1 = std::min(dstH, dstY + srcH);
-    if (x0 >= x1 || y0 >= y1) return;
-
-    for (int y = y0; y < y1; ++y)
-    {
-      const int sy = y - dstY;
-      const int dstRow = y * dstW;
-      const int srcRow = sy * srcW;
-
-      for (int x = x0; x < x1; ++x)
-      {
-        const int sx = x - dstX;
-        uint8_t idx = srcIdx[srcRow + sx] & 0x0F;
-
-        dst8[dstRow + x] = pal332[idx & 0x0F];
-      }
-    }
-  }
-}
+};
 
 // ------------------------------------------------------------
 
-UIGrid::UIGrid(const std::string &version) : _version(version) {}
+UIGrid::UIGrid(const std::string &version) : _version(version){}
 UIGrid::~UIGrid() { destroySprite(); }
 
 float UIGrid::clamp01(float v) { return v < 0 ? 0 : (v > 1 ? 1 : v); }
@@ -155,10 +90,10 @@ uint8_t UIGrid::typeToPicoColorIndex(EntityKind kind)
 {
   switch (kind)
   {
-    case EntityKind::BleAdv:      return 12; // Blue
-    case EntityKind::WifiClient:  return 11; // Green
-    case EntityKind::WifiAp:      return 9;  // Orange
-    default:                      return 7;  // White
+    case EntityKind::BleAdv:      return C_BLUE;
+    case EntityKind::WifiClient:  return C_GREEN;
+    case EntityKind::WifiAp:      return C_ORANGE;
+    default:                      return C_WHITE;
   }
 }
 
@@ -178,6 +113,7 @@ const char* UIGrid::typeToName(EntityKind kind)
 void UIGrid::begin(DeviceTracker* tracker)
 {
   _tracker = tracker;
+
   createSprite();
 
   _offset = 0;
@@ -188,12 +124,14 @@ void UIGrid::begin(DeviceTracker* tracker)
 
   setSelectionSlot(0);
 }
-
 void UIGrid::createSprite()
 {
   if (_sprInit) return;
 
   auto& lcd = M5Cardputer.Display;
+  
+  lcd.setColorDepth(8); // RGB332
+
   _w = lcd.width();
   _h = lcd.height();
 
@@ -205,11 +143,12 @@ void UIGrid::createSprite()
     return;
   }
 
-  _spr->setColorDepth(8);     // RGB332
+  _spr->setColorDepth(lgfx::palette_4bit);
   _spr->setTextWrap(false);
   _spr->setTextSize(1);
 
   _spr->createSprite(_w, _h);
+  _spr->createPalette((const uint16_t*)Colors::Pico8Colors, 16);
 
   if (_spr->getBuffer() == nullptr) {
     Serial.printf("[UI] Sprite alloc failed (%dx%d). free=%u\n", _w, _h, (unsigned)ESP.getFreeHeap());
@@ -217,7 +156,6 @@ void UIGrid::createSprite()
     return;
   }
 
-  _buf8 = (uint8_t*)_spr->getBuffer();
   _sprInit = true;
 
   Serial.printf("[UI] Sprite OK (%dx%d). bytes=%u free=%u\n",
@@ -231,7 +169,6 @@ void UIGrid::destroySprite()
     delete _spr;
     _spr = nullptr;
   }
-  _buf8 = nullptr;
   _sprInit = false;
 }
 
@@ -399,35 +336,80 @@ void UIGrid::handleKeyboard(Keyboard_Class& kb)
   const bool down  = kb.isKeyPressed('.') || kb.isKeyPressed('>');
   const bool left  = kb.isKeyPressed(',') || kb.isKeyPressed('<');
   const bool right = kb.isKeyPressed('/') || kb.isKeyPressed('?');
+  const bool wKey  = kb.isKeyPressed('w') || kb.isKeyPressed('W');
+  const bool kKey  = kb.isKeyPressed('k') || kb.isKeyPressed('K');
 
-  if (_screen == Screen::Grid) {
+  switch(_screen) {
+    case Screen::Grid:
+      {
+        // BACK in GRID = home (top-left). In detail it remains "back".
+        if (back) {
+          _offset = 0;
+          setSelectionSlot(0);
+          playSound(800, 100);
+          return;
+        }
 
-    // BACK in GRID = home (top-left). In detail it remains "back".
-    if (back) {
-      _offset = 0;
-      setSelectionSlot(0);
-      playSound(800, 100);
-      return;
-    }
+        if      (up)    { nav(0, -1); playSound(800, 50); }
+        else if (down)  { nav(0, +1); playSound(800, 50); }
+        else if (left)  { nav(-1, 0); playSound(800, 50); }
+        else if (right) { nav(+1, 0); playSound(800, 50); }
+        else if (enter) { openDetail(); playSound(1000, 100); }
+        else if (wKey) {
+          EntityView * pe = getSelectedEntity();
+          if (pe) {
+            // Toggle "watching" flag
+            if (HasFlag(pe->flags, EntityFlags::Watching)) {
+                ClearFlag(pe->flags, EntityFlags::Watching);
+              } else {
+                SetFlag(pe->flags, EntityFlags::Watching);
+              }
+            _tracker->updateEntity(pe);
+            _tracker->writeWatchlist();
+            playSound(600, 100);
+          }
+        }
+        else if (kKey) {
+            _tracker->writeWatchlistKml();
+            playSound(1000, 100);
+        }
+        
+      } break;
 
-    if      (up)    { nav(0, -1); playSound(800, 50); }
-    else if (down)  { nav(0, +1); playSound(800, 50); }
-    else if (left)  { nav(-1, 0); playSound(800, 50); }
-    else if (right) { nav(+1, 0); playSound(800, 50); }
-    else if (enter) { openDetail(); playSound(1000, 100); }
+    case Screen::Detail:
+      {
+        // detail view
+        if (enter || back) {
+          closeDetail();
+          playSound(800, 100);
+        } else {
+          if      (up)    { nav(0, -1); playSound(800, 50); }
+          else if (down)  { nav(0, +1); playSound(800, 50); }
+          else if (left)  { nav(-1, 0); playSound(800, 50); }
+          else if (right) { nav(+1, 0); playSound(800, 50); }
+          else if (wKey) {
+            EntityView* pe = getSelectedEntity();
+            if (pe) {
+              // Toggle "watching" flag
+              if (HasFlag(pe->flags, EntityFlags::Watching)) {
+                ClearFlag(pe->flags, EntityFlags::Watching);
+              } else {
+                SetFlag(pe->flags, EntityFlags::Watching);
+              }
+              _tracker->updateEntity(pe);
+              _tracker->writeWatchlist();
+              playSound(600, 100);
+            }
+          }
+          else if (kKey) {
+            _tracker->writeWatchlistKml();
+            playSound(1000, 100);
+          }
+        }
+      } break;
 
-  } else {
-
-    // detail view
-    if (enter || back) {
-      closeDetail();
-      playSound(800, 100);
-    } else {
-      if      (up)    { nav(0, -1); playSound(800, 50); }
-      else if (down)  { nav(0, +1); playSound(800, 50); }
-      else if (left)  { nav(-1, 0); playSound(800, 50); }
-      else if (right) { nav(+1, 0); playSound(800, 50); }
-    }
+    default:
+      break;
   }
 }
 
@@ -440,6 +422,38 @@ void UIGrid::lockDetailToSelection()
   } else {
     _detail_index_valid = false;
   }
+}
+
+EntityView* UIGrid::getDetailEntity()
+{
+  // Find locked detail device in live snapshot
+  EntityView* pe = nullptr;
+  if (_detail_index_valid) {
+    for (int i = 0; i < _count; ++i) {
+      if (_items[i].index == _detail_index && _items[i].kind == _detail_kind) {
+        pe = &_items[i];
+        break;
+      }
+    }
+  }
+
+  return pe;
+}
+
+EntityView* UIGrid::getGridEntity()
+{
+  if (_sel_idx < 0 || _sel_idx >= _count)
+    return nullptr;
+
+  return &_items[_sel_idx];
+}
+
+EntityView* UIGrid::getSelectedEntity()
+{
+  if (_screen == Screen::Detail)
+    return getDetailEntity();
+
+  return getGridEntity();
 }
 
 void UIGrid::nav(int dx, int dy)
@@ -599,21 +613,17 @@ void UIGrid::drawDetail()
   _spr->fillScreen(C_BLACK);
   _spr->setTextColor(C_LIGHT_GREY, C_BLACK);
 
-  // Find locked detail device in live snapshot
-  const EntityView* pe = nullptr;
-  if (_detail_index_valid) {
-    for (int i = 0; i < _count; ++i) {
-      if (_items[i].index == _detail_index && _items[i].kind == _detail_kind) {
-        pe = &_items[i];
-        break;
-      }
-    }
-  }
+  const EntityView* pe = getSelectedEntity();
 
   if (!pe) {
-    _spr->setCursor(4, 0);
+    _spr->setTextSize(2);
+    _spr->setCursor(4, 4);
     _spr->print("Not found.");
-    _spr->setCursor(4, 12);
+
+    _spr->setTextColor(C_LIGHT_GREY, C_BLACK);
+    _spr->setTextSize(1);
+  
+    _spr->setCursor(4, _h - 12);
     _spr->print("Enter/Del/Esc: back");
     pushFrame();
     return;
@@ -640,7 +650,7 @@ void UIGrid::drawDetail()
   const std::string name = _icon.Name();
 
   // ---- Header requested layout ----
-  renderIcon16ToSprite(4, 4, iconData, iconColorIndex);
+  renderIcon1bit16(4, 4, iconData, iconColorIndex);
 
   _spr->setTextSize(2);                 // name bigger
   _spr->setCursor(25, 5);
@@ -649,8 +659,8 @@ void UIGrid::drawDetail()
   _spr->setTextColor(C_WHITE, C_BLACK);
   _spr->setTextSize(1);
 
-  int textX = 4;
-  int textY = 28;
+  int offX = 4;
+  int offY = 28;
 
   char mac[18] = {};
   formatMac(e.addr, mac);
@@ -658,39 +668,39 @@ void UIGrid::drawDetail()
   if (e.ssid_len > 0) {
     char ssidPrintable[33] = {};
     memcpy(ssidPrintable, e.ssid, std::min((size_t)e.ssid_len, sizeof(ssidPrintable) - 1));
-    _spr->setCursor(textX, textY);
+    _spr->setCursor(offX, offY);
     _spr->printf("SSID: %s", ssidPrintable);
-    textY += 12;
+    offY += 12;
   }
 
   if (e.vendor != Vendor::Unknown) {
-    _spr->setCursor(textX, textY);
+    _spr->setCursor(offX, offY);
     _spr->printf("Vendor: %s", vendorStr.c_str());
-    textY += 12;
+    offY += 12;
   }
 
-  _spr->setCursor(textX, textY);
+  _spr->setCursor(offX, offY);
   _spr->printf("MAC: %s %s", mac, isMacRandomized ? "[R]" : "");
-  textY += 12;
+  offY += 12;
 
-  _spr->setCursor(textX, textY);
+  _spr->setCursor(offX, offY);
   _spr->printf("RSSI: %ddBm", (int)e.rssi);
-  textY += 12;
+  offY += 12;
 
-  _spr->setCursor(textX, textY);
+  _spr->setCursor(offX, offY);
   _spr->printf("Score: %.1f", (double)e.score);
-  textY += 12;
+  offY += 12;
 
-  textY += 4;
+  offY += 4;
 
-  if (e.has_geo) {
-    _spr->setCursor(textX, textY);
+  if (HasFlag(e.flags, EntityFlags::HasGeo)) {
+    _spr->setCursor(offX, offY);
     _spr->printf("Lat: %.6f", e.lat);
-    textY += 12;
+    offY += 12;
 
-    _spr->setCursor(textX, textY);
+    _spr->setCursor(offX, offY);
     _spr->printf("Lon: %.6f", e.lon);
-    textY += 12;
+    offY += 12;
   }
 
   // ---- Right side: avatar 48x48 top-right ----
@@ -708,10 +718,24 @@ void UIGrid::drawDetail()
   _spr->setCursor(4, _h - 12);
   _spr->print("Enter/Del/Esc: back");
 
+  offY = _h - 12;
+
   // Right justified type
   const char* typeStr = typeToName(e.kind);
-  _spr->setCursor(_w - 4 - (strlen(typeStr) * 6), _h - 12);
+  _spr->setCursor(_w - 4 - (strlen(typeStr) * 6), offY);
   _spr->print(typeStr);
+
+  offY -= 18;
+
+  if (HasFlag(e.flags, EntityFlags::Watching)) {
+    renderIcon1bit16(_w - 16 - 4, offY, Icons::Get16x16(Icons::IconSymbol::Watching), 8);
+  }
+
+  offY -= 18;
+
+  if (HasFlag(e.flags, EntityFlags::HasGeo)) {
+    renderIcon1bit16(_w - 16 - 4, offY, Icons::Get16x16(Icons::IconSymbol::Gps), 12);
+  }
 
   pushFrame();
 }
@@ -722,7 +746,7 @@ void UIGrid::drawDetail()
 
 void UIGrid::renderGridIconToSprite(int dstX, int dstY, const EntityView& e)
 {
-  if (!_buf8) return;
+  //if (!_buf8) return;
 
   Icon::IconType iconType = Icon::IconType::LargeIconWithMac;
   switch (_gridMode)
@@ -753,7 +777,7 @@ void UIGrid::renderGridIconToSprite(int dstX, int dstY, const EntityView& e)
   const std::uint8_t* largeIcon = e.vendor != Vendor::Unknown ? Icons::Get16x16(e.vendor) : Icons::Get16x16(iconSymbol);
   const uint8_t typeColor = typeToPicoColorIndex(e.kind);
 
-  const std::uint8_t* small1Icon = e.has_geo ? Icons::Get8x8(Icons::IconSymbol::Gps) : Icons::Get8x8(Icons::IconSymbol::None);
+  const std::uint8_t* small1Icon = Icons::Get8x8(Icons::IconSymbol::None);
   const std::uint8_t* small2Icon = Icons::Get8x8(Icons::IconSymbol::None);
 
   std::uint8_t bar1ColorIndex = 12;
@@ -762,6 +786,17 @@ void UIGrid::renderGridIconToSprite(int dstX, int dstY, const EntityView& e)
   std::uint8_t largeIconColorIndex = 12;
   std::uint8_t smallIcon1ColorIndex = 12;
   std::uint8_t smallIcon2ColorIndex = 12;
+
+  if (HasFlag(e.flags, EntityFlags::HasGeo))
+  {
+    small1Icon = Icons::Get8x8(Icons::IconSymbol::Gps);
+  }
+
+  if (HasFlag(e.flags, EntityFlags::Watching))
+  {
+    small1Icon = Icons::Get8x8(Icons::IconSymbol::Watching);
+    smallIcon1ColorIndex = 8;
+  }
 
   if (iconType == Icon::IconType::RetroAvatarWithMac)
   {
@@ -796,70 +831,51 @@ void UIGrid::renderGridIconToSprite(int dstX, int dstY, const EntityView& e)
     smallIcon2ColorIndex
   );
 
-  int iw=0, ih=0;
-  const uint8_t* src = GetIconPixels32(_icon, iw, ih);
-  if (!src || iw <= 0 || ih <= 0) return;
-
-  blitIndexedToSprite8(
-    _buf8, _w, _h,
-    dstX, dstY,
-    src, iw, ih,
-    g_pico332
-  );
+  _spr->pushImage(dstX, dstY, _icon.ImageW(), _icon.ImageH(), _icon.Pixels().data(), lgfx::palette_4bit, Colors::Pico8Colors);
 }
 
 void UIGrid::renderDetailAvatar48(int dstX, int dstY, uint32_t id)
 {
-  if (!_buf8) return;
+  // Render a 48x48 avatar at SCALE_4X into a Indexed4bppImage, then blit to sprite.
+  static constexpr int aw = 48;
+  static constexpr int ah = 48;
 
-  // Render a 48x48 avatar at SCALE_4X into a ByteGrid, then blit to sprite.
-  // This assumes you have ByteGrid available (same type used by Icon.cpp).
-  static constexpr int AW = 48;
-  static constexpr int AH = 48;
-
-  _grid.Reset(AW, AH);
+  _grid.Reset(aw, ah);
 
   _icon.Reset(id);
   _icon.DrawAvatar(_grid, 0, 0, SCALE_4X);
 
-  blitIndexedToSprite8(
-    _buf8, _w, _h,
-    dstX, dstY,
-    _grid.Raw().data(), AW, AH,
-    g_pico332
-  );
+  _spr->pushImage(dstX, dstY, aw, ah, _grid.Raw().data(), lgfx::palette_4bit, Colors::Pico8Colors);
 }
 
-void UIGrid::renderIcon16ToSprite(int dstX, int dstY,  const uint8_t* iconData, uint8_t picoColorIndex)
+static void expand1bpp_to_4bpp_16x16(uint8_t* out4bpp, const uint8_t* in1bpp, uint8_t onIndex)
 {
-  if (!_buf8) return;
-  if (!iconData) return;
-
-  const int width = 16;
-  const int height = 16;
-  const int bytesPerRow = 2; // 16 bits
-
-  const uint8_t c332 = g_pico332[picoColorIndex & 0x0F];
-
-  const int x0 = std::max(0, dstX);
-  const int y0 = std::max(0, dstY);
-  const int x1 = std::min(_w, dstX + width);
-  const int y1 = std::min(_h, dstY + height);
-
-  for (int y = y0; y < y1; ++y)
+  // 16x16 @4bpp = 128 bytes (2 pixels/byte)
+  // Assume MSB-first within each byte: bit 7 is x=0, bit 0 is x=7
+  for (int y = 0; y < 16; ++y)
   {
-    const int sy = y - dstY;
-    const int rowBase = sy * bytesPerRow;
-    const int dstRow = y * _w;
-
-    for (int x = x0; x < x1; ++x)
+    const uint8_t* row = in1bpp + y * 2; // 16px => 2 bytes/row
+    for (int x = 0; x < 16; ++x)
     {
-      const int sx = x - dstX;
-      const int byteIndex = rowBase + (sx >> 3);
-      const int bitIndex  = (sx & 7); // LSB-first (XBM)
+      const int byteIndex = x >> 3;
+      const int bit = 7 - (x & 7);
+      const bool on = (row[byteIndex] >> bit) & 1;
 
-      const bool on = ((iconData[byteIndex] >> bitIndex) & 1u) != 0;
-      if (on) _buf8[dstRow + x] = c332;
+      const uint8_t idx = on ? (onIndex & 0x0F) : 0;
+
+      const int p = y * 16 + x;
+      uint8_t& b = out4bpp[p >> 1];
+      if (p & 1) b = (b & 0xF0) | idx;        // low nibble
+      else       b = (idx << 4) | (b & 0x0F); // high nibble
     }
   }
+}
+
+void UIGrid::renderIcon1bit16(int dstX, int dstY, const uint8_t* iconData, uint8_t picoColorIndex)
+{
+  static uint8_t tmp4bpp[16 * 16 / 2] = {};
+  expand1bpp_to_4bpp_16x16(tmp4bpp, iconData, picoColorIndex);
+
+  // Treat index 0 as transparent if your pushImage overload supports it:
+  _spr->pushImage(dstX, dstY, 16, 16, tmp4bpp, lgfx::palette_4bit, Colors::Pico8Colors);
 }

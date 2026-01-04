@@ -121,7 +121,7 @@ void Icon::DrawName(int offsetY)
     Size textSize{ (int)_name.size() * _glyphSize.w, _glyphSize.h };
     Point textLoc{ (_iconSize.w / 2) - (textSize.w / 2) + 1, offsetY };
 
-    _fontRenderer.DrawText(_imageData.Raw(), _iconSize.w, _iconSize.h, COLOR_TEXT, textLoc.x, textLoc.y, _name);
+    _fontRenderer.DrawText(_imageData, COLOR_TEXT, textLoc.x, textLoc.y, _name);
 }
 
 void Icon::DrawMacAddress()
@@ -178,9 +178,9 @@ void Icon::DrawMacAddress()
     }
 
     // Draw text on top.
-    // FontRenderer expects std::vector<uint8_t>&, so we pass the ByteGrid's Raw vector.
-    _fontRenderer.DrawText(_imageData.Raw(), _imageW, _imageH, COLOR_TEXT_MAC, 0, line1Y, line1);
-    _fontRenderer.DrawText(_imageData.Raw(), _imageW, _imageH, COLOR_TEXT_MAC, 0, line2Y, line2);
+    // FontRenderer expects std::vector<uint8_t>&, so we pass the Indexed4bppImage's Raw vector.
+    _fontRenderer.DrawText(_imageData, COLOR_TEXT_MAC, 0, line1Y, line1);
+    _fontRenderer.DrawText(_imageData, COLOR_TEXT_MAC, 0, line2Y, line2);
 }
 
 void Icon::DrawVerticalBar(Rect rect, float value, std::uint8_t colorIndex)
@@ -246,8 +246,8 @@ void Icon::DrawIcon(const std::uint8_t* iconData, Rect iconRect, int colorIndex)
             const int x = xDst - iconRect.x;
 
             const int byteIndex = rowBase + (x >> 3); // x / 8
-            //const int bitIndex = 7 - (x & 7);         // MSB-first
-            const int bitIndex  = (x & 7);            // LSB-first (XBM)
+            const int bitIndex = 7 - (x & 7);         // MSB-first
+            //const int bitIndex  = (x & 7);            // LSB-first (XBM)
 
             const bool on = ((iconData[byteIndex] >> bitIndex) & 1u) != 0;
 

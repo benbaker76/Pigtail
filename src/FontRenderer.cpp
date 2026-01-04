@@ -1,6 +1,10 @@
 #include "FontRenderer.h"
+#include "Indexed4bppImage.h"
 
 #include <cstddef>
+#include <cstdint>
+#include <vector>
+#include <string_view>
 
 //   - Font is 4x5.
 //   - Each row is stored as a 4-bit nibble.
@@ -25,62 +29,56 @@ static const std::uint8_t kFontData[] = {
 
 static constexpr std::size_t kFontDataSize = sizeof(kFontData) / sizeof(kFontData[0]);
 
-void FontRenderer::DrawGlyph(std::vector<std::uint8_t>& imageData,
-                            int imageWidth,
-                            int imageHeight,
+void FontRenderer::DrawGlyph(Indexed4bppImage& imageData,
                             std::uint8_t colorIndex,
                             int x,
                             int y,
                             int glyphIndex) const
 {
+    const int imageWidth  = imageData.Width();
+    const int imageHeight = imageData.Height();
     if (imageWidth <= 0 || imageHeight <= 0)
-        return;
-
-    const std::size_t required = static_cast<std::size_t>(imageWidth) * static_cast<std::size_t>(imageHeight);
-    if (imageData.size() < required)
         return;
 
     const int w = GlyphWidth;
     const int h = GlyphHeight;
 
     const int totalNibbles = static_cast<int>(kFontDataSize * 2);
-    const int glyphCount = totalNibbles / h;
+    const int glyphCount   = totalNibbles / h;
     if (glyphIndex < 0 || glyphIndex >= glyphCount)
         return;
 
     const int glyphNibbleBase = glyphIndex * h;
+    colorIndex &= 0x0F; // 4bpp palette index
 
     for (int row = 0; row < h; ++row)
     {
         const int destY = y + row;
-        if (static_cast<unsigned>(destY) >= static_cast<unsigned>(imageHeight))
+        if ((unsigned)destY >= (unsigned)imageHeight)
             continue;
 
         const int nibbleIndex = glyphNibbleBase + row;
-        const int byteIndex = nibbleIndex >> 1;
+        const int byteIndex   = nibbleIndex >> 1;
         const bool highNibble = (nibbleIndex & 1) == 0;
 
-        const std::uint8_t packed = kFontData[static_cast<std::size_t>(byteIndex)];
+        const std::uint8_t packed = kFontData[(std::size_t)byteIndex];
         const int rowBits = highNibble ? (packed >> 4) : (packed & 0x0F);
 
         for (int col = 0; col < w; ++col)
         {
             const int destX = x + col;
-            if (static_cast<unsigned>(destX) >= static_cast<unsigned>(imageWidth))
+            if ((unsigned)destX >= (unsigned)imageWidth)
                 continue;
 
             if ((rowBits & (1 << (3 - col))) != 0)
             {
-                imageData[static_cast<std::size_t>(destY) * static_cast<std::size_t>(imageWidth)
-                          + static_cast<std::size_t>(destX)] = colorIndex;
+                imageData.At(destX, destY) = colorIndex; // Indexed4bppImage handles 4bpp packing
             }
         }
     }
 }
 
-void FontRenderer::DrawText(std::vector<std::uint8_t>& imageData,
-                           int imageWidth,
-                           int imageHeight,
+void FontRenderer::DrawText(Indexed4bppImage& imageData,
                            std::uint8_t colorIndex,
                            int x,
                            int y,
@@ -88,8 +86,8 @@ void FontRenderer::DrawText(std::vector<std::uint8_t>& imageData,
 {
     for (char ch : text)
     {
-        const int glyphIndex = static_cast<int>(static_cast<unsigned char>(ch)) - 32;
-        DrawGlyph(imageData, imageWidth, imageHeight, colorIndex, x, y, glyphIndex);
+        const int glyphIndex = (int)(unsigned char)ch - 32;
+        DrawGlyph(imageData, colorIndex, x, y, glyphIndex);
         x += GlyphWidth;
     }
 }

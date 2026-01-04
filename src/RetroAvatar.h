@@ -9,7 +9,7 @@
 #include <array>
 
 #include "Geometry.h"
-#include "ByteGrid.h"
+#include "Indexed4bppImage.h"
 #include "DeterministicRng.h"
 #include "FontRenderer.h"
 #include "MarkovNameGenerator.h"
@@ -21,7 +21,7 @@ public:
 
     void GenerateAvatar(std::uint32_t id);
     void DrawName(int offsetY);
-    void DrawAvatar(ByteGrid& imageData, int offsetX, int offsetY, int scale);
+    void DrawAvatar(Indexed4bppImage& imageData, int offsetX, int offsetY, int scale);
 
     static constexpr size_t ColorPaletteSize() { return 16; }
 
@@ -45,7 +45,7 @@ private:
     // Keep avatar size fixed for predictable memory footprint.
     Size _avatarSize{ 12, 12 };
 
-    ByteGrid _avatarData;
+    Indexed4bppImage _avatarData;
 
     // Semantic color -> palette index (fixed, no heap)
     std::array<std::uint8_t, kSemanticColorCount> _colorIndices;

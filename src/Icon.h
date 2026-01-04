@@ -4,7 +4,7 @@
 #include <string>
 #include <string_view>
 
-#include "ByteGrid.h"
+#include "Indexed4bppImage.h"
 #include "FontRenderer.h"
 #include "DeterministicRng.h"
 #include "RetroAvatar.h"
@@ -22,7 +22,7 @@ static constexpr int SCALE_2X = 2;
 static constexpr int SCALE_4X = 4;
 static constexpr int SCALE_8X = 8;
 
-// ByteGrid is a row-major 2D byte buffer with Reset(w,h) and Raw() returning std::vector<uint8_t>&
+// Indexed4bppImage is a row-major 2D byte buffer with Reset(w,h) and Raw() returning std::vector<uint8_t>&
 // FontRenderer exposes DrawText(std::vector<uint8_t>&, int w, int h, uint8_t color, int x, int y, std::string_view)
 // and glyph dimensions (GlyphWidth/GlyphHeight constants or equivalent).
 class Icon
@@ -53,13 +53,13 @@ public:
                   std::uint8_t smallIcon1ColorIndex,
                   const std::uint8_t* smallIcon2,
                   std::uint8_t smallIcon2ColorIndex);
-    void DrawAvatar(ByteGrid &imageData, int offsetX, int offsetY, int scale) {
+    void DrawAvatar(Indexed4bppImage &imageData, int offsetX, int offsetY, int scale) {
         _retroAvatar.DrawAvatar(imageData, offsetX, offsetY, scale);
     }
 
     // Access the rendered indexed image (32x32).
-    const ByteGrid& ImageData() const { return _imageData; }
-    ByteGrid& ImageData() { return _imageData; }
+    const Indexed4bppImage& ImageData() const { return _imageData; }
+    Indexed4bppImage& ImageData() { return _imageData; }
 
     const std::vector<std::uint8_t>& Pixels() const { return _imageData.Raw(); }
     int ImageW() const { return _imageW; }
@@ -92,5 +92,5 @@ private:
 
     std::string _name;
 
-    ByteGrid _imageData;
+    Indexed4bppImage _imageData;
 };

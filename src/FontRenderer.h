@@ -4,6 +4,8 @@
 #include <string_view>
 #include <vector>
 
+class Indexed4bppImage;
+
 // Renders a built-in 4x5 pixel font into an 8bpp indexed image.
 //
 // Destination format:
@@ -20,19 +22,13 @@ public:
     static constexpr int GlyphWidth  = 4;
     static constexpr int GlyphHeight = 5;
 
-    // Draw a single glyph.
-    void DrawGlyph(std::vector<std::uint8_t>& imageData,
-                   int imageWidth,
-                   int imageHeight,
+    void DrawGlyph(Indexed4bppImage& iamgeData,
                    std::uint8_t colorIndex,
                    int x,
                    int y,
                    int glyphIndex) const;
 
-    // Draw an ASCII string. Characters are mapped via (c - 32).
-    void DrawText(std::vector<std::uint8_t>& imageData,
-                  int imageWidth,
-                  int imageHeight,
+    void DrawText(Indexed4bppImage& ImageData,
                   std::uint8_t colorIndex,
                   int x,
                   int y,

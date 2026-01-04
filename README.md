@@ -60,7 +60,7 @@ Use this responsibly and comply with local laws and venue policies. This project
 
 ## UI overview
 
-### 1) Grid view (main view)
+### Grid view (main view)
 The main screen is a **7x4 grid** (28 slots) designed to fit exactly on a 240x135 display. Each visible slot represents one tracked entity (Wi-Fi client, BLE device, or AP).
 
 The header shows:
@@ -91,7 +91,7 @@ Entity types use consistent accent colors so you can differentiate categories in
 
 ---
 
-### 2) Detail view
+### Detail view
 Selecting an entity opens a detail screen with:
 
 - A small type icon (top-left)
@@ -103,6 +103,22 @@ Selecting an entity opens a detail screen with:
   - Optional GPS/geo fields (if available in your build)
 
 On the right side, the detail screen can show a large retro avatar for the selected entity, reinforcing recognition even when the MAC changes or is hard to remember.
+
+---
+
+## Watchlist
+
+![](images/watchlist_00.png)
+
+Pigtail includes a **watchlist** feature to help you keep specific devices pinned and easy to monitor across scans and restarts. While viewing a device (in either the grid or detail view), press **`w`** to toggle the device’s `Watching` flag. When enabled, the UI displays a **red eye** icon on that device’s tile (and in the detail view) to make it immediately obvious that the device is being tracked.
+
+Watchlisted devices are **persisted to flash memory**, so your selections survive reboots and power cycles without needing to re-tag devices each time. In addition, watchlisted entries are automatically **sorted to the front of the list**, ensuring the devices you care about remain visible even as new BLE/Wi-Fi targets appear and the list grows.
+
+## KML Export
+
+![](images/watchlist_01.png)
+
+Press **`k`** at any time to export the current watchlist to a KML file written to the **root of the SD card** as **`pt_watchlist.kml`**. This file can be imported into **Google Maps** (for example, via **Google My Maps**) to visualize watchlisted devices that include location data, making it easier to review sightings and map where tracked devices have been observed.
 
 ---
 
@@ -118,6 +134,8 @@ Default navigation (as implemented in the current UIGrid input handling):
 - **Del / Esc** : go home / back
 - **Esc** : reset (grid mode)
 - **Space** : cycle grid icon mode
+- **`w`**: add to watchlist (eye icon)
+- **`k`**: dump watchlist to `pt_watchlist.kml` file on root of sd card
 
 Navigation behavior:
 - No wrap-around at the edges (left at start does nothing; right at end does nothing).
@@ -159,8 +177,7 @@ Planned future improvements may include:
 - More refined scoring heuristics / profiles
 - Better handling of randomized addresses (pattern grouping experiments)
 - Additional views (filters, grouping, timeline, history)
-- Favorites and ignore lists
-- Export/logging modes for offline review / KMS format for Google Maps
+- Ignore lists
 - More hardware support
 
 ---
