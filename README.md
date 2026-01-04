@@ -177,6 +177,7 @@ Planned future improvements may include:
 - More refined scoring heuristics / profiles
 - Better handling of randomized addresses (pattern grouping experiments)
 - Additional views (filters, grouping, timeline, history)
+- "Focus" mode to gather intel on selected device
 - Ignore lists
 - More hardware support
 
