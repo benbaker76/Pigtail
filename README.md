@@ -194,6 +194,7 @@ Planned future improvements may include:
 ## Credits
 
 - [benbaker76](https://github.com/benbaker76) - Author & Maintainer
-- [miyaoka](https://github.com/miyaoka) - Creator of [RetroAvatars](http://wa.zozuar.org/code.php?c=lX5A)
+- [miyaoka](https://github.com/miyaoka) - Author of original [RetroAvatars](http://wa.zozuar.org/code.php?c=lX5A)
 - [Henrique Sebastião](https://github.com/henriquesebastiao/) - Author of original `generate_mac_file.py`
 - [nishad2m8](https://github.com/nishad2m8) - Author of original `GNSSModule` class
+- [LucidDion](https://github.com/LucidDion) - Author of original `MarkovNameGenerator` class
