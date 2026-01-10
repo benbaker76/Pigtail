@@ -1,4 +1,6 @@
 #include "DeviceTracker.h"
+#include "BleTracker.h"
+#include "Track.h"
 
 #include <WiFi.h>
 #include <ArduinoJson.h>
@@ -29,8 +31,6 @@ static constexpr int ANCHOR_IDLE_SEC     = 10 * 60;
 
 static constexpr int MAX_TRACKS  = 256;
 static constexpr int MAX_ANCHORS = 128;
-
-static constexpr int FP_TOP_N = 8;
 
 static constexpr int RSSI_NEAR_DBM = -65;
 static constexpr int RSSI_MID_DBM  = -80;
@@ -137,78 +137,6 @@ static bool parseKind(const char* s, EntityKind& out) {
 
 // ----------------------------- Model -----------------------------
 
-enum class TrackKind : uint8_t { WifiClient = 1, BleAdv = 2 };
-
-struct Track {
-  bool      in_use = false;
-  TrackKind kind{};
-  uint8_t   addr[6]{};
-
-  Vendor    vendor = Vendor::Unknown;
-
-  EntityFlags flags = EntityFlags::None;
-
-  uint16_t  index = 0;
-  uint32_t  first_seen_s = 0;
-  uint32_t  last_seen_s  = 0;
-
-  uint32_t  last_window  = 0;
-  uint32_t  seen_windows = 0;
-  uint32_t  near_windows = 0;
-
-  float     ema_rssi     = -100.0f;
-  float     ema_abs_dev  = 0.0f;
-
-  uint32_t  last_segment_id = 0;
-  uint32_t  env_hits        = 0;
-
-  float     crowd_ema = 0.0f;
-
-  // Last-seen GPS fix (where YOU were when you last observed this device)
-  uint32_t  last_geo_s = 0;
-  double    last_lat = 0.0;
-  double    last_lon = 0.0;
-
-  bool      tracker_like = false; // conservative placeholder
-};
-
-struct Anchor {
-  bool     in_use = false;
-  uint8_t  addr[6]{};
-
-  Vendor   vendor = Vendor::Unknown;
-
-  EntityFlags flags = EntityFlags::None;
-
-  uint8_t  ssid[32]{};
-  uint8_t  ssid_len = 0;
-
-  uint16_t index = 0;
-  int      last_rssi = -100;
-  uint32_t last_seen_s = 0;
-
-  // Last-seen GPS fix (where YOU were when you last observed this AP)
-  uint32_t last_geo_s = 0;
-  double   last_lat = 0.0;
-  double   last_lon = 0.0;
-
-  // "best pass" (strongest RSSI) location
-  int      best_rssi = -127;
-  double   best_lat = 0.0;
-  double   best_lon = 0.0;
-
-  // Optional running weighted average
-  double   w_sum = 0.0;
-  double   w_lat = 0.0;
-  double   w_lon = 0.0;
-};
-
-struct FpItem { uint8_t addr[6]; uint8_t bucket; };
-struct EnvFingerprint {
-  FpItem items[FP_TOP_N];
-  int count = 0;
-};
-
 static Track  g_tracks[MAX_TRACKS];
 static Anchor g_anchors[MAX_ANCHORS];
 static uint16_t g_next_index = 1;
@@ -249,9 +177,15 @@ struct Observation {
   uint8_t  ssid[32];
   uint8_t  ssid_len;
   uint32_t ts_s;
+
+  TrackerType           tracker_type = TrackerType::Unknown;
+  GoogleFmnManufacturer tracker_google_mfr = GoogleFmnManufacturer::Unknown;
+  SamsungTrackerSubtype tracker_samsung_subtype = SamsungTrackerSubtype::Unknown;
+  uint8_t               tracker_confidence = 0;
 };
 
 static QueueHandle_t g_obs_q = nullptr;
+static BleTracker* g_bleTracker = nullptr;
 
 // ----------------------------- Helpers -----------------------------
 
@@ -589,6 +523,23 @@ static void process_observation(const Observation& obs) {
         stamp_last_geo(t->flags, t->last_geo_s, t->last_lat, t->last_lon,
                        obs.ts_s, gps_lat, gps_lon);
       }
+
+      // NEW: apply tracker results without clobbering known values with Unknown
+      if (obs.tracker_type != TrackerType::Unknown) {
+        t->tracker_type = obs.tracker_type;
+
+        // Optional vendor inference
+        if (t->vendor == Vendor::Unknown) {
+          t->vendor = BleTracker::GetVendorFromTrackerType(obs.tracker_type);
+        }
+      }
+      if (obs.tracker_google_mfr != GoogleFmnManufacturer::Unknown)
+        t->tracker_google_mfr = obs.tracker_google_mfr;
+
+      if (obs.tracker_samsung_subtype != SamsungTrackerSubtype::Unknown)
+        t->tracker_samsung_subtype = obs.tracker_samsung_subtype;
+
+      t->tracker_confidence = max(t->tracker_confidence, obs.tracker_confidence);
     } break;
 
     case ObsKind::WifiApBeacon:
@@ -779,11 +730,17 @@ public:
     const std::vector<uint8_t>& p = dev->getPayload();
     extract_ble_name(p.data(), p.size(), obs.ssid, &obs.ssid_len);
 
+    if (g_bleTracker) {
+      const TrackerInfo info = g_bleTracker->Inspect(*dev);
+      obs.tracker_type = info.type;
+      obs.tracker_google_mfr = info.google_mfr;
+      obs.tracker_samsung_subtype = info.samsung_subtype;
+      obs.tracker_confidence = info.confidence;
+    }
+
     xQueueSend(g_obs_q, &obs, 0);
   }
 };
-
-static NimBLEScan* g_scan = nullptr;
 
 // ----------------------------- Tasks -----------------------------
 
@@ -809,7 +766,7 @@ static void wifi_hop_task(void*) {
   }
 }
 
-static void init_wifi_sniffer() {
+void DeviceTracker::initWifiSniffer() {
   esp_netif_init();
   esp_event_loop_create_default();
   esp_netif_create_default_wifi_sta();
@@ -844,20 +801,39 @@ static void init_wifi_sniffer() {
   Serial.println("Wi-Fi scan started and sniffer initialized");
 }
 
-static void init_ble_scan() {
+void DeviceTracker::initBleScan() {
   NimBLEDevice::init("");
   NimBLEDevice::setPower(ESP_PWR_LVL_P9);
 
-  g_scan = NimBLEDevice::getScan();
-  g_scan->setScanCallbacks(new ScanCB(), false);
-  g_scan->setActiveScan(true);
-  g_scan->setInterval(45);
-  g_scan->setWindow(15);
-  g_scan->setMaxResults(0);
-  g_scan->setDuplicateFilter(false);
-  g_scan->start(0, false, false);
+  _bleScan = NimBLEDevice::getScan();
+  _bleScan->setScanCallbacks(new ScanCB(), false);
+  _bleScan->setActiveScan(true);
+  _bleScan->setInterval(45);
+  _bleScan->setWindow(15);
+  _bleScan->setMaxResults(0);
+  _bleScan->setDuplicateFilter(false);
+  _bleScan->start(0, false, false);
 
   Serial.println("BLE sniffer started");
+}
+
+void DeviceTracker::stopBleScan() {
+  if (_bleScan) {
+    _bleScan->stop();
+    NimBLEDevice::deinit(true);
+    _bleScan = nullptr;
+    Serial.println("BLE sniffer stopped");
+  }
+}
+
+void DeviceTracker::restartBleScan() {
+  stopBleScan();
+  initBleScan();
+}
+
+void DeviceTracker::initBleTracker()
+{
+  g_bleTracker = new BleTracker(_bleScan);
 }
 
 static constexpr int OBS_Q_LEN = 64;
@@ -900,8 +876,9 @@ bool DeviceTracker::begin() {
   init_obs_queue();
   if (!g_obs_q) return false;
 
-  init_wifi_sniffer();
-  init_ble_scan();
+  initWifiSniffer();
+  initBleScan();
+  initBleTracker();
 
   readWatchlist();
 
@@ -954,7 +931,10 @@ int DeviceTracker::buildSnapshot(EntityView* out, int maxOut, float stationary_r
     e.near_windows = t.near_windows;
     e.crowd = t.crowd_ema;
     e.score = score_track(t, stationary_ratio);
-    e.tracker_like = t.tracker_like;
+    e.tracker_type = t.tracker_type;
+    e.tracker_google_mfr = t.tracker_google_mfr;
+    e.tracker_samsung_subtype = t.tracker_samsung_subtype;
+    e.tracker_confidence = t.tracker_confidence;
     if (HasFlag(t.flags, EntityFlags::HasGeo)) {
       e.lat = t.last_lat;
       e.lon = t.last_lon;
@@ -981,7 +961,10 @@ int DeviceTracker::buildSnapshot(EntityView* out, int maxOut, float stationary_r
     e.last_seen_s = a.last_seen_s;
 
     e.score = 0.0f;           // anchors not “suspicious” by default
-    e.tracker_like = false;
+    e.tracker_type = TrackerType::Unknown;
+    e.tracker_google_mfr = GoogleFmnManufacturer::Unknown;
+    e.tracker_samsung_subtype = SamsungTrackerSubtype::Unknown;
+    e.tracker_confidence = 0;
 
     e.flags = a.flags;
     if (HasFlag(a.flags, EntityFlags::HasGeo)) {
@@ -1134,7 +1117,7 @@ bool DeviceTracker::readWatchlist()
     return false;
   }
 
-  if (f.size() == 0) {  // helps explain the earlier EmptyInput case
+  if (f.size() == 0) {
     Serial.printf("[watchlist] file is empty: %s\n", PATH_WATCHLIST_JSON);
     f.close();
     return false;
@@ -1164,10 +1147,8 @@ bool DeviceTracker::readWatchlist()
 
   for (JsonVariant v : items) {
     JsonObject it = v.as<JsonObject>();
-    if (it.isNull()) {
-      skipped++;
-      continue;
-    }
+    if (it.isNull()) { skipped++; continue; }
+
     const char* kindStr = it["kind"].as<const char*>();
     const char* macStr  = it["mac"].as<const char*>();
 
@@ -1196,7 +1177,7 @@ bool DeviceTracker::readWatchlist()
             na.flags  = EntityFlags::None;
             na.index  = g_next_index++;
             na.last_seen_s = ts;
-            na.last_rssi   = -95; // more “display-friendly” than -100
+            na.last_rssi   = -95;
             a = &na;
             break;
           }
@@ -1207,7 +1188,6 @@ bool DeviceTracker::readWatchlist()
 
       a->flags |= EntityFlags::Watching;
 
-      // Restore SSID (optional, see writeWatchlist changes below)
       if (it["ssid"].is<const char*>()) {
         const char* ss = it["ssid"];
         size_t n = std::min<size_t>(strlen(ss), sizeof(a->ssid));
@@ -1246,12 +1226,13 @@ bool DeviceTracker::readWatchlist()
             nt.index  = g_next_index++;
             nt.first_seen_s = ts;
             nt.last_seen_s  = ts;
-            nt.ema_rssi     = -95.0f; // helps if UI hides “unknown” RSSI
+            nt.ema_rssi     = -95.0f;
             t = &nt;
+
             if (it["lat"].is<double>() && it["lon"].is<double>()) {
               t->last_lat = (double)it["lat"];
               t->last_lon = (double)it["lon"];
-              t->last_geo_s = ts; // “restored at boot” timestamp; optional
+              t->last_geo_s = ts;
               t->flags |= EntityFlags::HasGeo;
             }
             break;
@@ -1260,6 +1241,33 @@ bool DeviceTracker::readWatchlist()
       }
 
       if (!t) { skipped++; continue; }
+
+      // ---- Restore tracker fields (optional) ----
+      // Keep each independent; you can choose to "sanitize" later if desired.
+      if (it["tracker_type"].is<const char*>()) {
+        TrackerType tt{};
+        if (BleTracker::ParseTrackerType(it["tracker_type"].as<const char*>(), tt)) {
+          t->tracker_type = tt;
+        }
+      }
+
+      if (it["tracker_google_mfr"].is<const char*>()) {
+        GoogleFmnManufacturer gm{};
+        if (BleTracker::ParseGoogleMfr(it["tracker_google_mfr"].as<const char*>(), gm)) {
+          t->tracker_google_mfr = gm;
+        }
+      }
+
+      if (it["tracker_samsung_subtype"].is<const char*>()) {
+        SamsungTrackerSubtype ss{};
+        if (BleTracker::ParseSamsungSubtype(it["tracker_samsung_subtype"].as<const char*>(), ss)) {
+          t->tracker_samsung_subtype = ss;
+        }
+      }
+
+      if (it["tracker_confidence"].is<uint8_t>()) {
+        t->tracker_confidence = it["tracker_confidence"].as<uint8_t>();
+      }
 
       t->flags |= EntityFlags::Watching;
       applied++;
@@ -1294,13 +1302,22 @@ void DeviceTracker::dumpWatchlistFile() {
 void DeviceTracker::outputLists()
 {
   portENTER_CRITICAL(&g_lock);
+
   for (int i=0;i<MAX_TRACKS;i++) {
     if (g_tracks[i].in_use && HasFlag(g_tracks[i].flags, EntityFlags::Watching)) {
       char mac[18]; macToString(g_tracks[i].addr, mac);
-      Serial.printf("[watch] Track kind=%d idx=%u mac=%s flags=0x%X\n",
-        (int)g_tracks[i].kind, g_tracks[i].index, mac, (unsigned)g_tracks[i].flags);
+      Serial.printf("[watch] Track kind=%d idx=%u mac=%s flags=0x%X tt=%s gm=%s ss=%s\n",
+        (int)g_tracks[i].kind,
+        g_tracks[i].index,
+        mac,
+        (unsigned)g_tracks[i].flags,
+        BleTracker::TrackerTypeName(g_tracks[i].tracker_type),
+        BleTracker::GoogleMfrName(g_tracks[i].tracker_google_mfr),
+        BleTracker::SamsungSubtypeName(g_tracks[i].tracker_samsung_subtype),
+        (unsigned)g_tracks[i].tracker_confidence);
     }
   }
+
   for (int i=0;i<MAX_ANCHORS;i++) {
     if (g_anchors[i].in_use && HasFlag(g_anchors[i].flags, EntityFlags::Watching)) {
       char mac[18]; macToString(g_anchors[i].addr, mac);
@@ -1308,6 +1325,7 @@ void DeviceTracker::outputLists()
         g_anchors[i].index, mac, g_anchors[i].ssid_len, (unsigned)g_anchors[i].flags);
     }
   }
+
   portEXIT_CRITICAL(&g_lock);
 }
 
@@ -1332,19 +1350,17 @@ bool DeviceTracker::writeWatchlist()
     }
   };
 
-  // Temp then rename (your atomic-ish write)
   File f = fs.open(PATH_WATCHLIST_JSON, FILE_WRITE);
   if (!f) {
     Serial.printf("[watchlist] open failed: %s\n", PATH_WATCHLIST_JSON);
     return false;
   }
 
-  f.print("{\"version\":1,\"items\":[");
+  f.print("{\"version\":2,\"items\":[");
   bool first = true;
 
   // ---------- Anchors ----------
   for (int i = 0; i < MAX_ANCHORS; ++i) {
-    // Small per-item snapshot
     bool in_use = false;
     bool watching = false;
     uint8_t mac[6]{};
@@ -1353,7 +1369,6 @@ bool DeviceTracker::writeWatchlist()
     bool hasGeo = false;
     double lat = 0.0, lon = 0.0;
 
-    // Snapshot under lock
     portENTER_CRITICAL(&g_lock);
     if (g_anchors[i].in_use) {
       in_use = true;
@@ -1413,6 +1428,11 @@ bool DeviceTracker::writeWatchlist()
     bool hasGeo = false;
     double lat = 0.0, lon = 0.0;
 
+    TrackerType tt = TrackerType::Unknown;
+    GoogleFmnManufacturer gm = GoogleFmnManufacturer::Unknown;
+    SamsungTrackerSubtype ss = SamsungTrackerSubtype::Unknown;
+    uint8_t tc = 0;
+
     portENTER_CRITICAL(&g_lock);
     if (g_tracks[i].in_use) {
       in_use = true;
@@ -1426,6 +1446,11 @@ bool DeviceTracker::writeWatchlist()
           lat = g_tracks[i].last_lat;
           lon = g_tracks[i].last_lon;
         }
+
+        tt = g_tracks[i].tracker_type;
+        gm = g_tracks[i].tracker_google_mfr;
+        ss = g_tracks[i].tracker_samsung_subtype;
+        tc = g_tracks[i].tracker_confidence;
       }
     }
     portEXIT_CRITICAL(&g_lock);
@@ -1449,6 +1474,27 @@ bool DeviceTracker::writeWatchlist()
     if (hasGeo) {
       f.print(",\"lat\":"); f.print(lat, 8);
       f.print(",\"lon\":"); f.print(lon, 8);
+    }
+
+    // ---- NEW: tracker fields ----
+    if (tt != TrackerType::Unknown) {
+      f.print(",\"tracker_type\":\"");
+      f.print(BleTracker::TrackerTypeName(tt));
+      f.print("\"");
+    }
+    if (gm != GoogleFmnManufacturer::Unknown) {
+      f.print(",\"tracker_google_mfr\":\"");
+      f.print(BleTracker::GoogleMfrName(gm));
+      f.print("\"");
+    }
+    if (ss != SamsungTrackerSubtype::Unknown) {
+      f.print(",\"tracker_samsung_subtype\":\"");
+      f.print(BleTracker::SamsungSubtypeName(ss));
+      f.print("\"");
+    }
+    if (tc != 0) {
+      f.print(",\"tracker_confidence\":");
+      f.print((unsigned)tc);
     }
 
     f.print("}");
@@ -1586,6 +1632,11 @@ bool DeviceTracker::writeWatchlistKml()
     uint8_t mac[6]{};
     double lat = 0.0, lon = 0.0;
 
+    TrackerType tt = TrackerType::Unknown;
+    GoogleFmnManufacturer gm = GoogleFmnManufacturer::Unknown;
+    SamsungTrackerSubtype ss = SamsungTrackerSubtype::Unknown;
+    uint8_t tc = 0;
+
     portENTER_CRITICAL(&g_lock);
     if (g_tracks[i].in_use) {
       in_use   = true;
@@ -1597,6 +1648,11 @@ bool DeviceTracker::writeWatchlistKml()
         memcpy(mac, g_tracks[i].addr, 6);
         lat = g_tracks[i].last_lat;
         lon = g_tracks[i].last_lon;
+
+        tt = g_tracks[i].tracker_type;
+        gm = g_tracks[i].tracker_google_mfr;
+        ss = g_tracks[i].tracker_samsung_subtype;
+        tc = g_tracks[i].tracker_confidence;
       }
     }
     portEXIT_CRITICAL(&g_lock);
@@ -1610,8 +1666,16 @@ bool DeviceTracker::writeWatchlistKml()
 
     f.print("    <Placemark>\n");
     f.print("      <name>");
-    f.print(kindStr);
-    f.print(" ");
+
+    // Prefer tracker_type in name if present
+    if (tt != TrackerType::Unknown) {
+      f.print(BleTracker::TrackerTypeName(tt));
+      f.print(" ");
+    } else {
+      f.print(kindStr);
+      f.print(" ");
+    }
+
     f.print(macStr);
     f.print("</name>\n");
 
@@ -1620,6 +1684,24 @@ bool DeviceTracker::writeWatchlistKml()
     f.print(kindStr);
     f.print("&#10;MAC: ");
     f.print(macStr);
+
+    if (tt != TrackerType::Unknown) {
+      f.print("&#10;TrackerType: ");
+      f.print(BleTracker::TrackerTypeName(tt));
+    }
+    if (gm != GoogleFmnManufacturer::Unknown) {
+      f.print("&#10;GoogleFMN: ");
+      f.print(BleTracker::GoogleMfrName(gm));
+    }
+    if (ss != SamsungTrackerSubtype::Unknown) {
+      f.print("&#10;SamsungSubtype: ");
+      f.print(BleTracker::SamsungSubtypeName(ss));
+    }
+    if (tc != 0) {
+      f.print("&#10;TrackerConfidence: ");
+      f.print((unsigned)tc);
+    }
+
     f.print("</description>\n");
 
     f.print("      <Point>\n");

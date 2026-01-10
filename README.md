@@ -106,6 +106,7 @@ Bars/indicators:
 Entity types use consistent accent colors so you can differentiate categories instantly. A typical mapping is:
 
 - **BLE**: Blue
+- **BLE tracker**: Yellow
 - **Wi-Fi client**: Green
 - **Wi-Fi AP**: Orange
 
@@ -125,6 +126,24 @@ Selecting an entity opens a detail screen with:
   - Optional GPS/geo fields (if available in your build)
 
 On the right side, the detail screen can show a large retro avatar for the selected entity, reinforcing recognition even when the MAC changes or is hard to remember.
+
+---
+
+## Trackers
+
+The tracker pipeline has detection and persistence for common BLE "find-my" style devices (e.g., AirTag/Find My, Google Find Hub accessories, and Samsung SmartThings variants).
+
+Trackers it will attempt to identify:
+
+- **Apple AirPods**
+- **Apple AirTag**
+- **Apple Find My**
+- **Chipolo**
+- **Google Find Hub**: PebbleBee, Chipolo, Eufy, Motorola, Jio, Rolling Square
+- **PebbleBee**
+- **SmartThings Find**
+- **martThings Tracker**: SmartTag 1, SmartTag+, SmartTag 2, Solum SmartTag
+- **Tile**
 
 ---
 

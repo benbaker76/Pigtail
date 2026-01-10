@@ -125,19 +125,23 @@ struct Colors
         C_LAVENDER,    // Csr
         C_BLUE,        // DLink
         C_RED,         // Espressif
+        C_LIGHT_GREY,  // Eufy
         C_LIGHT_GREY,  // Google
         C_RED,         // Huawei
         C_GREEN,       // Innway
         C_BLUE,        // Intel
         C_GREEN,       // Intelbras
+        C_BLUE,        // Jio
         C_ORANGE,      // Mercury
         C_GREEN,       // Mercusys
         C_DARK_GREY,   // Microsoft
         C_ORANGE,      // Mikrotik
         C_BLUE,        // Motorola
         C_LAVENDER,    // Netgear
-        C_RED,         // RaspberryPi
+        C_YELLOW,      // Pebblebee
         C_BLUE,        // Qualcomm
+        C_RED,         // RaspberryPi
+        C_LIGHT_GREY,  // RollingSquare
         C_BLUE,        // Samsung
         C_DARK_GREY,   // Sony
         C_RED,         // Ti

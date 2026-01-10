@@ -9,6 +9,8 @@
 #include "Names.h"
 #include "MarkovNameGenerator.h"
 #include "MacPrefixes.h"
+#include "BleTracker.h"
+#include "Track.h"
 
 #include <algorithm>
 #include <array>
@@ -679,6 +681,28 @@ void UIGrid::drawDetail()
     offY += 12;
   }
 
+  if (e.tracker_type != TrackerType::Unknown) {
+    const char* trackerTypeStr = BleTracker::TrackerTypeName(e.tracker_type);
+    _spr->setCursor(offX, offY);
+
+    if (e.tracker_google_mfr != GoogleFmnManufacturer::Unknown)
+    {
+      const char* googleMfrStr = BleTracker::GoogleMfrName(e.tracker_google_mfr);
+      _spr->printf("Tracker: %s (%s)", trackerTypeStr, googleMfrStr);
+    }
+    else if (e.tracker_samsung_subtype != SamsungTrackerSubtype::Unknown)
+    {
+      const char* samsungSubtypeStr = BleTracker::SamsungSubtypeName(e.tracker_samsung_subtype);
+      _spr->printf("Tracker: %s (%s)", trackerTypeStr, samsungSubtypeStr);
+    }
+    else
+    {
+      _spr->printf("Tracker: %s", trackerTypeStr);
+    }
+
+    offY += 12;
+  }
+
   _spr->setCursor(offX, offY);
   _spr->printf("MAC: %s %s", mac, isMacRandomized ? "[R]" : "");
   offY += 12;
@@ -728,13 +752,18 @@ void UIGrid::drawDetail()
   offY -= 18;
 
   if (HasFlag(e.flags, EntityFlags::Watching)) {
-    renderIcon1bit16(_w - 16 - 4, offY, Icons::Get16x16(Icons::IconSymbol::Watching), 8);
+    renderIcon1bit16(_w - 16 - 4, offY, Icons::Get16x16(Icons::IconSymbol::Watching), C_RED);
+    offY -= 18;
   }
 
-  offY -= 18;
+  if (e.tracker_type != TrackerType::Unknown) {
+    renderIcon1bit16(_w - 16 - 4, offY, Icons::Get16x16(Icons::IconSymbol::Tracker), C_YELLOW);
+    offY -= 18;
+  }
 
   if (HasFlag(e.flags, EntityFlags::HasGeo)) {
-    renderIcon1bit16(_w - 16 - 4, offY, Icons::Get16x16(Icons::IconSymbol::Gps), 12);
+    renderIcon1bit16(_w - 16 - 4, offY, Icons::Get16x16(Icons::IconSymbol::Gps), C_BLUE);
+    offY -= 18;
   }
 
   pushFrame();
@@ -780,12 +809,12 @@ void UIGrid::renderGridIconToSprite(int dstX, int dstY, const EntityView& e)
   const std::uint8_t* small1Icon = Icons::Get8x8(Icons::IconSymbol::None);
   const std::uint8_t* small2Icon = Icons::Get8x8(Icons::IconSymbol::None);
 
-  std::uint8_t bar1ColorIndex = 12;
-  std::uint8_t bar2ColorIndex = 13;
+  std::uint8_t bar1ColorIndex = C_BLUE;
+  std::uint8_t bar2ColorIndex = C_LAVENDER;
 
-  std::uint8_t largeIconColorIndex = 12;
-  std::uint8_t smallIcon1ColorIndex = 12;
-  std::uint8_t smallIcon2ColorIndex = 12;
+  std::uint8_t largeIconColorIndex = C_BLUE;
+  std::uint8_t smallIcon1ColorIndex = C_BLUE;
+  std::uint8_t smallIcon2ColorIndex = C_BLUE;
 
   if (HasFlag(e.flags, EntityFlags::HasGeo))
   {
@@ -795,7 +824,7 @@ void UIGrid::renderGridIconToSprite(int dstX, int dstY, const EntityView& e)
   if (HasFlag(e.flags, EntityFlags::Watching))
   {
     small1Icon = Icons::Get8x8(Icons::IconSymbol::Watching);
-    smallIcon1ColorIndex = 8;
+    smallIcon1ColorIndex = C_RED;
   }
 
   if (iconType == Icon::IconType::RetroAvatarWithMac)
@@ -815,6 +844,12 @@ void UIGrid::renderGridIconToSprite(int dstX, int dstY, const EntityView& e)
     {
       largeIconColorIndex = typeColor;
     }
+  }
+
+  if (e.tracker_type != TrackerType::Unknown)
+  {
+    small2Icon = Icons::Get8x8(Icons::IconSymbol::Tracker);
+    smallIcon2ColorIndex = C_YELLOW;
   }
 
   _icon.Reset(id, mac);
