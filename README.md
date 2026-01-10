@@ -142,7 +142,7 @@ Trackers it will attempt to identify:
 - **Google Find Hub**: PebbleBee, Chipolo, Eufy, Motorola, Jio, Rolling Square
 - **PebbleBee**
 - **SmartThings Find**
-- **martThings Tracker**: SmartTag 1, SmartTag+, SmartTag 2, Solum SmartTag
+- **SmartThings Tracker**: SmartTag 1, SmartTag+, SmartTag 2, Solum SmartTag
 - **Tile**
 
 ---
