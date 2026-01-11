@@ -9,7 +9,7 @@
 #include "Logo.h"
 #include "Colors.h"
 
-#define VERSION "1.0.06"
+#define VERSION "1.0.07"
 
 static DeviceTracker g_tracker;
 static UIGrid g_ui(VERSION);
@@ -265,7 +265,7 @@ void loop() {
   const uint32_t dt = (last_env > 0) ? (ts - last_env) : 0;
   float stationary_ratio = dt >= 120 ? 1.0f : (float)dt / 120.0f;
 
-  // UI refresh ~2 Hz
+  // UI refresh ~30.3 Hz
   static uint32_t last_ms = 0;
   const uint32_t ms = millis();
   if (ms - last_ms >= UI_FRAME_MS) {

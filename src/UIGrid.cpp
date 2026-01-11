@@ -216,6 +216,45 @@ void UIGrid::update(float stationary_ratio)
   else                         drawDetail();
 }
 
+void UIGrid::updateBatteryIfDue()
+{
+  const uint32_t ms = millis();
+  if (_battery_level < 0 || (ms - _battery_last_ms) >= BATTERY_UPDATE_MS)
+  {
+    _battery_last_ms = ms;
+    _battery_charging = false; // M5Cardputer.Power.isCharging();
+    _battery_level = M5Cardputer.Power.getBatteryLevel(); // 0..100
+    if (_battery_level < 0) _battery_level = 0;
+    if (_battery_level > 100) _battery_level = 100;
+  }
+}
+
+void UIGrid::drawBatteryIndicator()
+{
+  if (!_sprInit) return;
+  if (_battery_level < 0) return;
+
+  // Map 0..100 to 5 icons
+  int idx = 0;
+  if      (_battery_level >= 81) idx = 4;
+  else if (_battery_level >= 61) idx = 3;
+  else if (_battery_level >= 41) idx = 2;
+  else if (_battery_level >= 21) idx = 1;
+  else                           idx = 0;
+
+  // Simple "charging" affordance: blink between level and full, and tint yellow.
+  uint8_t color = _battery_charging ? C_YELLOW : C_WHITE;
+  if (_battery_charging) {
+    if (((millis() / 400) & 1) == 0) idx = 4;
+  }
+
+  const int margin = 2;
+  const int x = _w - margin - 8;
+  const int y = 0; // header line
+
+  renderIcon1bit8(x, y, Icons::IconBattery_8x8[idx], color, false);
+}
+
 void UIGrid::setSelectionSlot(int slot)
 {
   if (slot < 0) slot = 0;
@@ -557,6 +596,10 @@ void UIGrid::drawGrid()
   _spr->setCursor(4, 0);
   _spr->printf("Pigtail %s n=%d", _version.c_str(), _count);
 
+  // Battery (grid mode only, cached)
+  updateBatteryIfDue();
+  drawBatteryIndicator();
+
   // Fit 4*32 = 128 into 135 with minimal vertical margin.
   // start_y = 7 -> 7 + 128 = 135 exactly. No padding between rows.
   const int pad = 0;
@@ -585,11 +628,35 @@ void UIGrid::drawGrid()
     }
   }
 
+  // Loading indicator under tiles until enough items collected
+  drawLoadingIndicatorIfNeeded(start_x, start_y, gridW);
+
   // Draw selection
   _spr->drawRect(sel_x, sel_y, TILE, TILE, C_YELLOW);
   _spr->drawRect(sel_x - 1, sel_y - 1, TILE + 2, TILE + 2, C_YELLOW);
 
   pushFrame();
+}
+
+void UIGrid::drawLoadingIndicatorIfNeeded(int start_x, int start_y, int gridW)
+{
+  if (!_sprInit) return;
+  if (_count > 17) return;
+
+  // Advance animation frame
+  const uint32_t ms = millis();
+  if (ms - _loading_last_ms >= LOADING_ANIM_MS) {
+    _loading_last_ms = ms;
+    _loading_frame = (uint8_t)((_loading_frame + 1) & 7); // 0..7
+  }
+
+  // Center of the GRID area (not the whole screen)
+  const int gridH = ROWS * TILE;
+  const int cx = start_x + (gridW / 2) - 8;  // -8 => half of 16
+  const int cy = start_y + (gridH / 2) - 8;
+
+  // Draw as 16x16 1bpp, tinted light-grey
+  renderIcon1bit16(cx, cy, Icons::IconLoading_16x16[_loading_frame], C_LIGHT_GREY, true);
 }
 
 void UIGrid::drawTile(int slot, int x, int y)
@@ -652,7 +719,7 @@ void UIGrid::drawDetail()
   const std::string name = _icon.Name();
 
   // ---- Header requested layout ----
-  renderIcon1bit16(4, 4, iconData, iconColorIndex);
+  renderIcon1bit16(4, 4, iconData, iconColorIndex, false);
 
   _spr->setTextSize(2);                 // name bigger
   _spr->setCursor(25, 5);
@@ -752,17 +819,17 @@ void UIGrid::drawDetail()
   offY -= 18;
 
   if (HasFlag(e.flags, EntityFlags::Watching)) {
-    renderIcon1bit16(_w - 16 - 4, offY, Icons::Get16x16(Icons::IconSymbol::Watching), C_RED);
+    renderIcon1bit16(_w - 16 - 4, offY, Icons::Get16x16(Icons::IconSymbol::Watching), C_RED, false);
     offY -= 18;
   }
 
   if (e.tracker_type != TrackerType::Unknown) {
-    renderIcon1bit16(_w - 16 - 4, offY, Icons::Get16x16(Icons::IconSymbol::Tracker), C_YELLOW);
+    renderIcon1bit16(_w - 16 - 4, offY, Icons::Get16x16(Icons::IconSymbol::Tracker), C_YELLOW, false);
     offY -= 18;
   }
 
   if (HasFlag(e.flags, EntityFlags::HasGeo)) {
-    renderIcon1bit16(_w - 16 - 4, offY, Icons::Get16x16(Icons::IconSymbol::Gps), C_BLUE);
+    renderIcon1bit16(_w - 16 - 4, offY, Icons::Get16x16(Icons::IconSymbol::Gps), C_BLUE, false);
     offY -= 18;
   }
 
@@ -906,11 +973,45 @@ static void expand1bpp_to_4bpp_16x16(uint8_t* out4bpp, const uint8_t* in1bpp, ui
   }
 }
 
-void UIGrid::renderIcon1bit16(int dstX, int dstY, const uint8_t* iconData, uint8_t picoColorIndex)
+static void expand1bpp_to_4bpp_8x8(uint8_t* out4bpp, const uint8_t* in1bpp, uint8_t onIndex)
+{
+  // 8x8 @4bpp = 32 bytes (2 pixels/byte)
+  // in1bpp: 8 rows, 1 byte per row, MSB-first
+  for (int y = 0; y < 8; ++y)
+  {
+    const uint8_t row = in1bpp[y];
+    for (int x = 0; x < 8; ++x)
+    {
+      const int bit = 7 - x;
+      const bool on = (row >> bit) & 1;
+      const uint8_t idx = on ? (onIndex & 0x0F) : 0;
+
+      const int p = y * 8 + x;
+      uint8_t& b = out4bpp[p >> 1];
+      if (p & 1) b = (b & 0xF0) | idx;        // low nibble
+      else       b = (idx << 4) | (b & 0x0F); // high nibble
+    }
+  }
+}
+
+void UIGrid::renderIcon1bit16(int dstX, int dstY, const uint8_t* iconData, uint8_t picoColorIndex, bool transparent)
 {
   static uint8_t tmp4bpp[16 * 16 / 2] = {};
   expand1bpp_to_4bpp_16x16(tmp4bpp, iconData, picoColorIndex);
 
   // Treat index 0 as transparent if your pushImage overload supports it:
-  _spr->pushImage(dstX, dstY, 16, 16, tmp4bpp, lgfx::palette_4bit, Colors::Pico8Colors);
+  if (transparent)
+    _spr->pushImage(dstX, dstY, 16, 16, tmp4bpp, C_BLACK, lgfx::palette_4bit, Colors::Pico8Colors);
+  else
+    _spr->pushImage(dstX, dstY, 16, 16, tmp4bpp, lgfx::palette_4bit, Colors::Pico8Colors);
+}
+
+void UIGrid::renderIcon1bit8(int dstX, int dstY, const uint8_t* iconData, uint8_t picoColorIndex, bool transparent)
+{
+  static uint8_t tmp4bpp[8 * 8 / 2] = {};
+  expand1bpp_to_4bpp_8x8(tmp4bpp, iconData, picoColorIndex);
+  if (transparent)
+    _spr->pushImage(dstX, dstY, 8, 8, tmp4bpp, C_BLACK, lgfx::palette_4bit, Colors::Pico8Colors);
+  else
+    _spr->pushImage(dstX, dstY, 8, 8, tmp4bpp, lgfx::palette_4bit, Colors::Pico8Colors);
 }
