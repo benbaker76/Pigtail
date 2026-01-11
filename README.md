@@ -205,6 +205,9 @@ Planned future improvements may include:
 - Better handling of randomized addresses (pattern grouping experiments)
 - Additional views (filters, grouping, timeline, history)
 - "Focus" mode to gather intel on selected device
+- Activate tracker sound to locate it
+- WiGLE API integration for SSID geolocation
+- Device search / filtering
 - Ignore lists
 - More hardware support
 
