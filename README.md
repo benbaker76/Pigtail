@@ -1,6 +1,6 @@
 ![](images/PigtailLogo.png)
 
-Pigtail is a tiny [Chasing-Your-Tail-NG](https://github.com/ArgeliusLabs/Chasing-Your-Tail-NG) proximity monitor for ESP32 that visualizes nearby wireless activity using icons, color, and retro-style avatars.
+Pigtail is a tiny [Chasing Your Tail](https://github.com/ArgeliusLabs/Chasing-Your-Tail-NG) (CYT) proximity monitor for ESP32 that visualizes nearby wireless activity using icons, color, and retro-style avatars.
 
 It passively observes **Wi-Fi** and **BLE** presence, tracks *how long* devices linger, and ranks them with a simple "suspicion / interest" score. Because MAC addresses are hard to mentally compare (hex bytes separated by `:` or `-`), Pigtail uses **distinct icons**, **consistent colors**, and **unique retro avatars** to help you recognize patterns over time at a glance.
 
@@ -8,7 +8,7 @@ It passively observes **Wi-Fi** and **BLE** presence, tracks *how long* devices 
 
 ## Why "Pigtail"?
 
-This started as a [Chasing-Your-Tail-NG](https://github.com/ArgeliusLabs/Chasing-Your-Tail-NG) app-something that runs on an ESP32 and gives you a lightweight sense of what's around you. The name **Pigtail** is a nod to that idea, plus the small, portable nature of the device.
+This started as a [Chasing Your Tail](https://github.com/ArgeliusLabs/Chasing-Your-Tail-NG) (CYT) app-something that runs on an ESP32 and gives you a lightweight sense of what's around you. The name **Pigtail** is a nod to that idea, plus the small, portable nature of the device.
 
 To add a personal spin, Pigtail integrates **RetroAvatars** (originally by Richard Phipps) with enhancements such as additional color support. RetroAvatars has always felt like it deserved a "real" project where the visuals matter-this was the perfect fit.
 
@@ -208,7 +208,7 @@ Planned future improvements may include:
 - Activate tracker sound to locate it
 - WiGLE API integration for SSID geolocation
 - Device search / filtering
-- Ignore lists
+- Ignore list
 - More hardware support
 
 ---
