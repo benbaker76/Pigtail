@@ -49,7 +49,8 @@ enum class EntityKind : uint8_t { WifiClient = 1, BleAdv = 2, WifiAp = 3 };
 enum class EntityFlags : uint8_t {
   None           = 0,
   HasGeo         = (1 << 0),
-  Watching       = (1 << 1)
+  Watching       = (1 << 1),
+  Ignoring       = (1 << 2),
 };
 
 constexpr EntityFlags operator|(EntityFlags a, EntityFlags b)
@@ -100,7 +101,7 @@ struct EntityView {
   uint16_t   index;        // entity index
   uint8_t    addr[6];      // MAC address
   Vendor     vendor;       // OUI vendor
-  uint8_t    ssid[32];     // SSID
+  uint8_t    ssid[33];     // SSID
   uint8_t    ssid_len;     // SSID length
   float      score;        // 0..100 (tracks) or 0 for AP anchors
   int        rssi;         // dBm (EMA for tracks, last for AP)

@@ -378,6 +378,7 @@ void UIGrid::handleKeyboard(Keyboard_Class& kb)
   const bool left  = kb.isKeyPressed(',') || kb.isKeyPressed('<');
   const bool right = kb.isKeyPressed('/') || kb.isKeyPressed('?');
   const bool wKey  = kb.isKeyPressed('w') || kb.isKeyPressed('W');
+  const bool iKey  = kb.isKeyPressed('i') || kb.isKeyPressed('I');
   const bool kKey  = kb.isKeyPressed('k') || kb.isKeyPressed('K');
 
   switch(_screen) {
@@ -403,9 +404,27 @@ void UIGrid::handleKeyboard(Keyboard_Class& kb)
             if (HasFlag(pe->flags, EntityFlags::Watching)) {
                 ClearFlag(pe->flags, EntityFlags::Watching);
               } else {
+                ClearFlag(pe->flags, EntityFlags::Ignoring);
                 SetFlag(pe->flags, EntityFlags::Watching);
               }
             _tracker->updateEntity(pe);
+            _tracker->writeIgnorelist();
+            _tracker->writeWatchlist();
+            playSound(600, 100);
+          }
+        }
+        else if (iKey) {
+          EntityView * pe = getSelectedEntity();
+          if (pe) {
+            // Toggle "ignoring" flag
+            if (HasFlag(pe->flags, EntityFlags::Ignoring)) {
+                ClearFlag(pe->flags, EntityFlags::Ignoring);
+              } else {
+                ClearFlag(pe->flags, EntityFlags::Watching);
+                SetFlag(pe->flags, EntityFlags::Ignoring);
+              }
+            _tracker->updateEntity(pe);
+            _tracker->writeIgnorelist();
             _tracker->writeWatchlist();
             playSound(600, 100);
           }
@@ -435,9 +454,27 @@ void UIGrid::handleKeyboard(Keyboard_Class& kb)
               if (HasFlag(pe->flags, EntityFlags::Watching)) {
                 ClearFlag(pe->flags, EntityFlags::Watching);
               } else {
+                ClearFlag(pe->flags, EntityFlags::Ignoring);
                 SetFlag(pe->flags, EntityFlags::Watching);
               }
               _tracker->updateEntity(pe);
+              _tracker->writeIgnorelist();
+              _tracker->writeWatchlist();
+              playSound(600, 100);
+            }
+          }
+          else if (iKey) {
+            EntityView* pe = getSelectedEntity();
+            if (pe) {
+              // Toggle "ignoring" flag
+              if (HasFlag(pe->flags, EntityFlags::Ignoring)) {
+                ClearFlag(pe->flags, EntityFlags::Ignoring);
+              } else {
+                ClearFlag(pe->flags, EntityFlags::Watching);
+                SetFlag(pe->flags, EntityFlags::Ignoring);
+              }
+              _tracker->updateEntity(pe);
+              _tracker->writeIgnorelist();
               _tracker->writeWatchlist();
               playSound(600, 100);
             }
@@ -735,10 +772,8 @@ void UIGrid::drawDetail()
   formatMac(e.addr, mac);
 
   if (e.ssid_len > 0) {
-    char ssidPrintable[33] = {};
-    memcpy(ssidPrintable, e.ssid, std::min((size_t)e.ssid_len, sizeof(ssidPrintable) - 1));
     _spr->setCursor(offX, offY);
-    _spr->printf("SSID: %s", ssidPrintable);
+    _spr->printf("SSID: %s", e.ssid);
     offY += 12;
   }
 
@@ -822,6 +857,10 @@ void UIGrid::drawDetail()
     renderIcon1bit16(_w - 16 - 4, offY, Icons::Get16x16(Icons::IconSymbol::Watching), C_RED, false);
     offY -= 18;
   }
+  else if (HasFlag(e.flags, EntityFlags::Ignoring)) {
+    renderIcon1bit16(_w - 16 - 4, offY, Icons::Get16x16(Icons::IconSymbol::Ignoring), C_YELLOW, false);
+    offY -= 18;
+  }
 
   if (e.tracker_type != TrackerType::Unknown) {
     renderIcon1bit16(_w - 16 - 4, offY, Icons::Get16x16(Icons::IconSymbol::Tracker), C_YELLOW, false);
@@ -892,6 +931,11 @@ void UIGrid::renderGridIconToSprite(int dstX, int dstY, const EntityView& e)
   {
     small1Icon = Icons::Get8x8(Icons::IconSymbol::Watching);
     smallIcon1ColorIndex = C_RED;
+  }
+  else if (HasFlag(e.flags, EntityFlags::Ignoring))
+  {
+    small1Icon = Icons::Get8x8(Icons::IconSymbol::Ignoring);
+    smallIcon1ColorIndex = C_YELLOW;
   }
 
   if (iconType == Icon::IconType::RetroAvatarWithMac)

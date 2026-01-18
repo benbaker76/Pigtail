@@ -149,5 +149,6 @@ struct Colors
         C_GREEN,       // TpLink
         C_PEACH,       // Tracki
         C_BLUE,        // Ubiquiti
+        C_GREEN        // Ugreen
     };
 };

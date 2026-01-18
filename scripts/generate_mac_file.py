@@ -73,6 +73,7 @@ VENDOR_ENUM_ORDER = [
     "TpLink",
     "Tracki",
     "Ubiquiti",
+    "Ugreen",
 ]
 
 # Display strings aligned 1:1 with VENDOR_ENUM_ORDER above.
@@ -111,6 +112,7 @@ VENDOR_DISPLAY_NAMES = {
     "TpLink": "TP-Link",
     "Tracki": "Tracki",
     "Ubiquiti": "Ubiquiti",
+    "Ugreen": "Ugreen",
 }
 
 # Normalize manufacturer names to: UPPERCASE words/digits separated by single spaces
@@ -165,6 +167,7 @@ VENDOR_PATTERNS: List[Tuple[str, List[Pattern[str]]]] = [
     ("TpLink",  [rx(r"\bTP LINK\b")]),
     ("Tracki",  [rx(r"\bTRACKI\b")]),
     ("Ubiquiti",[rx(r"\bUBIQUITI\b")]),
+    ("Ugreen",[rx(r"\bUGREEN\b")]),
 ]
 
 def vendor_from_manufacturer(manufacturer: str) -> str:

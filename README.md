@@ -71,6 +71,7 @@ Default navigation (as implemented in the current UIGrid input handling):
 - **Esc** : reset (grid mode)
 - **Space** : cycle grid icon mode
 - **`w`**: add to watchlist (eye icon)
+- **`i`**: add to ignorelist (warning icon)
 - **`k`**: dump watchlist to `pt_watchlist.kml` file on root of sd card
 
 Navigation behavior:
@@ -208,7 +209,6 @@ Planned future improvements may include:
 - Activate tracker sound to locate it
 - WiGLE API integration for SSID geolocation
 - Device search / filtering
-- Ignore list
 - More hardware support
 
 ---

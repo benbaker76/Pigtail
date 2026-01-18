@@ -16,14 +16,22 @@ static constexpr const char* UUID_FEED = "0000FEED-0000-1000-8000-00805F9B34FB";
 BleTracker::BleTracker(NimBLEScan* bleScan)
   : _bleScan(bleScan) {}
 
-bool BleTracker::IContains(const std::string& haystack, const char* needle) {
-  if (!needle || !*needle) return true;
-  auto it = std::search(
-    haystack.begin(), haystack.end(),
-    needle, needle + std::strlen(needle),
-    [](char a, char b) { return std::tolower((unsigned char)a) == std::tolower((unsigned char)b); }
-  );
-  return it != haystack.end();
+static inline bool memcmpi(const uint8_t* a, const uint8_t* b, size_t n) {
+  for (size_t i = 0; i < n; ++i) {
+    if (std::tolower(a[i]) != std::tolower(b[i])) return false;
+  }
+  return true;
+}
+
+static inline bool Contains(const uint8_t* name, uint8_t name_len, const char* needle) {
+  if (!name || !needle) return false;
+  const size_t needle_len = strlen(needle);
+  if (name_len < needle_len) return false;
+
+  for (size_t i = 0; i <= name_len - needle_len; ++i) {
+    if (memcmpi(name + i, reinterpret_cast<const uint8_t*>(needle), needle_len)) return true;
+  }
+  return false;
 }
 
 bool BleTracker::HasService(const NimBLEAdvertisedDevice& dev, const char* uuid_str) {
@@ -52,34 +60,33 @@ bool BleTracker::TryGetAppleMfgPayload(const NimBLEAdvertisedDevice& dev, const 
   return true;
 }
 
-GoogleFmnManufacturer BleTracker::GuessGoogleMfrFromName(const std::string& name) {
-  if (name.empty()) return GoogleFmnManufacturer::Unknown;
+GoogleFmnManufacturer BleTracker::GuessGoogleMfrFromName(const uint8_t* name, uint8_t name_len) {
+  if (name == nullptr || name_len == 0) return GoogleFmnManufacturer::Unknown;
 
-  if (IContains(name, "pebblebee"))      return GoogleFmnManufacturer::PebbleBee;
-  if (IContains(name, "chipolo"))        return GoogleFmnManufacturer::Chipolo;
-  if (IContains(name, "eufy"))           return GoogleFmnManufacturer::Eufy;
-  if (IContains(name, "motorola"))       return GoogleFmnManufacturer::Motorola;
-  if (IContains(name, "moto"))           return GoogleFmnManufacturer::Motorola;
-  if (IContains(name, "jio"))            return GoogleFmnManufacturer::Jio;
-  if (IContains(name, "rolling square")) return GoogleFmnManufacturer::RollingSquare;
-
+  if (Contains(name, name_len, "pebblebee"))      return GoogleFmnManufacturer::PebbleBee;
+  if (Contains(name, name_len, "chipolo"))        return GoogleFmnManufacturer::Chipolo;
+  if (Contains(name, name_len, "eufy"))           return GoogleFmnManufacturer::Eufy;
+  if (Contains(name, name_len, "motorola"))       return GoogleFmnManufacturer::Motorola;
+  if (Contains(name, name_len, "moto"))           return GoogleFmnManufacturer::Motorola;
+  if (Contains(name, name_len, "jio"))            return GoogleFmnManufacturer::Jio;
+  if (Contains(name, name_len, "rolling square")) return GoogleFmnManufacturer::RollingSquare;
   return GoogleFmnManufacturer::Unknown;
 }
 
-SamsungTrackerSubtype BleTracker::GuessSamsungSubtypeFromName(const std::string& name) {
-  if (name.empty()) return SamsungTrackerSubtype::Unknown;
+  SamsungTrackerSubtype BleTracker::GuessSamsungSubtypeFromName(const uint8_t* name, uint8_t name_len) {
+  if (name == nullptr || name_len == 0) return SamsungTrackerSubtype::Unknown;
 
   // AirGuard does subtype via GATT reads (name/appearance/manufacturer). We keep passive heuristics only:
-  if (IContains(name, "smarttag2") || IContains(name, "smart tag2") || IContains(name, "smart tag 2")) {
+  if (Contains(name, name_len, "smarttag2") || Contains(name, name_len, "smart tag2") || Contains(name, name_len, "smart tag 2")) {
     return SamsungTrackerSubtype::SmartTag2;
   }
-  if (IContains(name, "solum")) {
+  if (Contains(name, name_len, "solum")) {
     return SamsungTrackerSubtype::Solum;
   }
-  if (IContains(name, "smarttag+") || IContains(name, "smart tag+")) {
+  if (Contains(name, name_len, "smarttag+") || Contains(name, name_len, "smart tag+")) {
     return SamsungTrackerSubtype::SmartTag1Plus;
   }
-  if (IContains(name, "smarttag") || IContains(name, "smart tag")) {
+  if (Contains(name, name_len, "smarttag") || Contains(name, name_len, "smart tag")) {
     // Could be 1 or 1+, but without UWB bit parsing / GATT we assume SmartTag 1.
     return SamsungTrackerSubtype::SmartTag1;
   }
@@ -87,10 +94,9 @@ SamsungTrackerSubtype BleTracker::GuessSamsungSubtypeFromName(const std::string&
   return SamsungTrackerSubtype::Unknown;
 }
 
-TrackerInfo BleTracker::Inspect(const NimBLEAdvertisedDevice& dev) const {
+TrackerInfo BleTracker::Inspect(const NimBLEAdvertisedDevice& dev,
+                      const uint8_t* name, uint8_t name_len) const {
   TrackerInfo out{};
-
-  const std::string name = dev.haveName() ? dev.getName() : std::string{};
 
   // 1) Strong UUID signals first
   if (HasService(dev, UUID_FEED)) {
@@ -102,7 +108,7 @@ TrackerInfo BleTracker::Inspect(const NimBLEAdvertisedDevice& dev) const {
   if (HasService(dev, UUID_FD5A)) {
     out.type = TrackerType::SmartThingsTracker;
     out.confidence = 95;
-    out.samsung_subtype = GuessSamsungSubtypeFromName(name);
+    out.samsung_subtype = GuessSamsungSubtypeFromName(name, name_len);
     return out;
   }
 
@@ -115,7 +121,7 @@ TrackerInfo BleTracker::Inspect(const NimBLEAdvertisedDevice& dev) const {
   if (HasService(dev, UUID_FEAA)) {
     out.type = TrackerType::GoogleFindHub;
     out.confidence = 90;
-    out.google_mfr = GuessGoogleMfrFromName(name);
+    out.google_mfr = GuessGoogleMfrFromName(name, name_len);
     return out;
   }
 
@@ -185,6 +191,33 @@ static bool ieq(const char* a, const char* b) {
     if (ca != cb) return false;
   }
   return *a == 0 && *b == 0;
+}
+
+void BleTracker::GetName(
+    const uint8_t* payload, size_t len,
+    uint8_t out[32], uint8_t* out_len)
+{
+  *out_len = 0;
+  if (!payload || len < 2) return;
+
+  size_t i = 0;
+  while (i < len) {
+    uint8_t ad_len = payload[i];
+    if (ad_len == 0) break;
+    if (i + 1 + ad_len > len) break;
+
+    uint8_t ad_type = payload[i + 1];
+    const uint8_t* ad_data = payload + i + 2;
+    size_t ad_data_len = ad_len - 1;
+
+    if (ad_type == BLE_HS_ADV_TYPE_COMP_NAME || ad_type == BLE_HS_ADV_TYPE_INCOMP_NAME) {
+      size_t ncopy = std::min<size_t>(ad_data_len, 32);
+      if (ncopy) memcpy(out, ad_data, ncopy);
+      *out_len = (uint8_t)ncopy;
+      return;
+    }
+    i += (1 + ad_len);
+  }
 }
 
 Vendor BleTracker::GetVendorFromTrackerType(TrackerType t) {

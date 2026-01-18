@@ -51,6 +51,8 @@ static constexpr int     HOP_MS      = 250;
 static constexpr const char* PATH_WATCHLIST_JSON = "/pt_watchlist.json";
 static constexpr const char* PATH_WATCHLIST_KML = "/pt_watchlist.kml";
 
+static constexpr const char* PATH_IGNORELIST_JSON = "/pt_ignorelist.json";
+
 // ----------------------------- Time helpers -----------------------------
 
 static inline uint64_t now_us() { return (uint64_t)esp_timer_get_time(); }
@@ -688,33 +690,6 @@ static void IRAM_ATTR wifi_promisc_cb(void* buf, wifi_promiscuous_pkt_type_t typ
 
 // ----------------------------- BLE scanning -----------------------------
 
-static inline void extract_ble_name(
-    const uint8_t* payload, size_t len,
-    uint8_t out[32], uint8_t* out_len)
-{
-  *out_len = 0;
-  if (!payload || len < 2) return;
-
-  size_t i = 0;
-  while (i < len) {
-    uint8_t ad_len = payload[i];
-    if (ad_len == 0) break;
-    if (i + 1 + ad_len > len) break;
-
-    uint8_t ad_type = payload[i + 1];
-    const uint8_t* ad_data = payload + i + 2;
-    size_t ad_data_len = ad_len - 1;
-
-    if (ad_type == 0x09 || ad_type == 0x08) { // Complete/Shortened Local Name
-      size_t ncopy = std::min<size_t>(ad_data_len, 32);
-      if (ncopy) memcpy(out, ad_data, ncopy);
-      *out_len = (uint8_t)ncopy;
-      return;
-    }
-    i += (1 + ad_len);
-  }
-}
-
 class ScanCB : public NimBLEScanCallbacks {
 public:
   void onResult(const NimBLEAdvertisedDevice* dev) override {
@@ -728,10 +703,10 @@ public:
     memcpy(obs.addr, addr_ptr->val, 6);
 
     const std::vector<uint8_t>& p = dev->getPayload();
-    extract_ble_name(p.data(), p.size(), obs.ssid, &obs.ssid_len);
+    BleTracker::GetName(p.data(), p.size(), obs.ssid, &obs.ssid_len);
 
     if (g_bleTracker) {
-      const TrackerInfo info = g_bleTracker->Inspect(*dev);
+      const TrackerInfo info = g_bleTracker->Inspect(*dev, obs.ssid, obs.ssid_len);
       obs.tracker_type = info.type;
       obs.tracker_google_mfr = info.google_mfr;
       obs.tracker_samsung_subtype = info.samsung_subtype;
@@ -880,6 +855,7 @@ bool DeviceTracker::begin() {
   initBleScan();
   initBleTracker();
 
+  readIgnorelist();
   readWatchlist();
 
   //dumpWatchlistFile();
@@ -954,8 +930,9 @@ int DeviceTracker::buildSnapshot(EntityView* out, int maxOut, float stationary_r
     memcpy(e.addr, a.addr, 6);
     e.vendor = a.vendor;
     e.flags = a.flags;
-    e.ssid_len = std::min<uint8_t>(a.ssid_len, sizeof(e.ssid));
+    e.ssid_len = std::min<uint8_t>(a.ssid_len, sizeof(e.ssid) - 1);
     if (e.ssid_len) memcpy(e.ssid, a.ssid, e.ssid_len);
+    e.ssid[e.ssid_len] = '\0';
     e.rssi = a.last_rssi;
     e.age_s = (ts - a.last_seen_s);
     e.last_seen_s = a.last_seen_s;
@@ -986,8 +963,11 @@ int DeviceTracker::buildSnapshot(EntityView* out, int maxOut, float stationary_r
   std::sort(out, out + n, [](const EntityView& a, const EntityView& b) {
     bool a_watched = HasFlag(a.flags, EntityFlags::Watching);
     bool b_watched = HasFlag(b.flags, EntityFlags::Watching);
+    bool a_ignored = HasFlag(a.flags, EntityFlags::Ignoring);
+    bool b_ignored = HasFlag(b.flags, EntityFlags::Ignoring);
 
     if (a_watched != b_watched) return a_watched > b_watched;
+    if (a_ignored != b_ignored) return a_ignored < b_ignored;
     if (a.score != b.score) return a.score > b.score;
     if (a.rssi != b.rssi) return a.rssi > b.rssi;
     return a.index < b.index;
@@ -1014,6 +994,11 @@ void DeviceTracker::updateEntity(const EntityView* in)
         SetFlag(g_anchors[i].flags, EntityFlags::Watching);
       else
         ClearFlag(g_anchors[i].flags, EntityFlags::Watching);
+      
+      if (HasFlag(in->flags, EntityFlags::Ignoring))
+        SetFlag(g_anchors[i].flags, EntityFlags::Ignoring);
+      else
+        ClearFlag(g_anchors[i].flags, EntityFlags::Ignoring);
 
       portEXIT_CRITICAL(&g_lock);
       return;
@@ -1029,6 +1014,11 @@ void DeviceTracker::updateEntity(const EntityView* in)
         SetFlag(g_tracks[i].flags, EntityFlags::Watching);
       else
         ClearFlag(g_tracks[i].flags, EntityFlags::Watching);
+      
+      if (HasFlag(in->flags, EntityFlags::Ignoring))
+        SetFlag(g_tracks[i].flags, EntityFlags::Ignoring);
+      else
+        ClearFlag(g_tracks[i].flags, EntityFlags::Ignoring);
 
       portEXIT_CRITICAL(&g_lock);
       return;
@@ -1728,5 +1718,173 @@ bool DeviceTracker::writeWatchlistKml()
 
   SD.end();
 
+  return true;
+}
+
+bool DeviceTracker::readIgnorelist()
+{
+  fs::FS& fs = SPIFFS;
+
+  File f = fs.open(PATH_IGNORELIST_JSON, FILE_READ);
+  if (!f) {
+    Serial.printf("[ignorelist] no file: %s\n", PATH_IGNORELIST_JSON);
+    return false;
+  }
+
+  if (f.size() == 0) {
+    Serial.printf("[ignorelist] file is empty: %s\n", PATH_IGNORELIST_JSON);
+    f.close();
+    return false;
+  }
+
+  JsonDocument doc;
+  DeserializationError err = deserializeJson(doc, f);
+  f.close();
+
+  if (err) {
+    Serial.printf("[ignorelist] JSON parse failed: %s\n", err.c_str());
+    return false;
+  }
+
+  JsonArray items = doc["items"].as<JsonArray>();
+  if (items.isNull()) {
+    Serial.println("[ignorelist] missing 'items'");
+    return false;
+  }
+
+  uint32_t applied = 0;
+  uint32_t skipped = 0;
+
+  portENTER_CRITICAL(&g_lock);
+
+  for (JsonVariant v : items) {
+    JsonObject it = v.as<JsonObject>();
+    if (it.isNull()) { skipped++; continue; }
+
+    const char* macStr = it["mac"].as<const char*>();
+
+    uint8_t mac[6]{};
+    if (!macStr || !parseMac(macStr, mac)) {
+      skipped++;
+      continue;
+    }
+
+    bool found = false;
+
+    // Try anchors (WifiAp table)
+    for (int i = 0; i < MAX_ANCHORS; ++i) {
+      if (g_anchors[i].in_use && memcmp(g_anchors[i].addr, mac, 6) == 0) {
+        g_anchors[i].flags |= EntityFlags::Ignoring;
+        found = true;
+        break;
+      }
+    }
+
+    // Try tracks (BleAdv/WifiClient table)
+    if (!found) {
+      for (int i = 0; i < MAX_TRACKS; ++i) {
+        if (g_tracks[i].in_use && memcmp(g_tracks[i].addr, mac, 6) == 0) {
+          g_tracks[i].flags |= EntityFlags::Ignoring;
+          found = true;
+          break;
+        }
+      }
+    }
+
+    if (found) applied++;
+    else skipped++;
+  }
+
+  // Fix next index (keep consistent with watchlist)
+  uint16_t maxIdx = 0;
+  for (int i = 0; i < MAX_TRACKS; ++i)  if (g_tracks[i].in_use)  maxIdx = std::max<uint16_t>(maxIdx, g_tracks[i].index);
+  for (int i = 0; i < MAX_ANCHORS; ++i) if (g_anchors[i].in_use) maxIdx = std::max<uint16_t>(maxIdx, g_anchors[i].index);
+  g_next_index = (uint16_t)(maxIdx + 1);
+  if (g_next_index == 0) g_next_index = 1;
+
+  portEXIT_CRITICAL(&g_lock);
+
+  Serial.printf("[ignorelist] json=%u applied=%u skipped=%u\n",
+                (unsigned)items.size(), (unsigned)applied, (unsigned)skipped);
+
+  return applied > 0;
+}
+
+bool DeviceTracker::writeIgnorelist()
+{
+  fs::FS& fs = SPIFFS;
+
+  File f = fs.open(PATH_IGNORELIST_JSON, FILE_WRITE);
+  if (!f) {
+    Serial.printf("[ignorelist] open failed: %s\n", PATH_IGNORELIST_JSON);
+    return false;
+  }
+
+  f.print("{\"version\":1,\"items\":[");
+
+  bool first = true;
+
+  // ---------- Anchors ----------
+  for (int i = 0; i < MAX_ANCHORS; ++i) {
+    bool in_use = false;
+    bool ignoring = false;
+    uint8_t mac[6]{};
+
+    portENTER_CRITICAL(&g_lock);
+    if (g_anchors[i].in_use) {
+      in_use = true;
+      ignoring = HasFlag(g_anchors[i].flags, EntityFlags::Ignoring);
+      if (ignoring) {
+        memcpy(mac, g_anchors[i].addr, 6);
+      }
+    }
+    portEXIT_CRITICAL(&g_lock);
+
+    if (!in_use || !ignoring) continue;
+
+    char macStr[18];
+    if (!macToString(mac, macStr)) continue;
+
+    if (!first) f.print(",");
+    first = false;
+
+    f.print("{\"mac\":\"");
+    f.print(macStr);
+    f.print("\"}");
+  }
+
+  // ---------- Tracks ----------
+  for (int i = 0; i < MAX_TRACKS; ++i) {
+    bool in_use = false;
+    bool ignoring = false;
+    uint8_t mac[6]{};
+
+    portENTER_CRITICAL(&g_lock);
+    if (g_tracks[i].in_use) {
+      in_use = true;
+      ignoring = HasFlag(g_tracks[i].flags, EntityFlags::Ignoring);
+      if (ignoring) {
+        memcpy(mac, g_tracks[i].addr, 6);
+      }
+    }
+    portEXIT_CRITICAL(&g_lock);
+
+    if (!in_use || !ignoring) continue;
+
+    char macStr[18];
+    if (!macToString(mac, macStr)) continue;
+
+    if (!first) f.print(",");
+    first = false;
+
+    f.print("{\"mac\":\"");
+    f.print(macStr);
+    f.print("\"}");
+  }
+
+  f.print("]}");
+  f.close();
+
+  Serial.printf("[ignorelist] wrote %s\n", PATH_IGNORELIST_JSON);
   return true;
 }
