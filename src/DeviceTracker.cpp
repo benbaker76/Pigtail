@@ -189,6 +189,67 @@ struct Observation {
 static QueueHandle_t g_obs_q = nullptr;
 static BleTracker* g_bleTracker = nullptr;
 
+// ----------------------------- Ignorelist (persistent in-memory) -----------------------------
+
+static constexpr int MAX_IGNORES = 256; // tune as needed
+
+struct IgnoreEntry {
+  bool    in_use = false;
+  uint8_t addr[6]{};
+};
+
+static IgnoreEntry g_ignores[MAX_IGNORES];
+
+static inline void ignore_clear_unlocked() {
+  for (int i = 0; i < MAX_IGNORES; ++i) g_ignores[i] = IgnoreEntry{};
+}
+
+static inline bool ignore_contains_unlocked(const uint8_t mac[6]) {
+  for (int i = 0; i < MAX_IGNORES; ++i) {
+    if (g_ignores[i].in_use && memcmp(g_ignores[i].addr, mac, 6) == 0) return true;
+  }
+  return false;
+}
+
+static inline bool ignore_add_unlocked(const uint8_t mac[6]) {
+  // Already present?
+  for (int i = 0; i < MAX_IGNORES; ++i) {
+    if (g_ignores[i].in_use && memcmp(g_ignores[i].addr, mac, 6) == 0) return true;
+  }
+  // Find free slot
+  for (int i = 0; i < MAX_IGNORES; ++i) {
+    if (!g_ignores[i].in_use) {
+      g_ignores[i].in_use = true;
+      memcpy(g_ignores[i].addr, mac, 6);
+      return true;
+    }
+  }
+  return false; // full
+}
+
+static inline void ignore_remove_unlocked(const uint8_t mac[6]) {
+  for (int i = 0; i < MAX_IGNORES; ++i) {
+    if (g_ignores[i].in_use && memcmp(g_ignores[i].addr, mac, 6) == 0) {
+      g_ignores[i] = IgnoreEntry{};
+      return;
+    }
+  }
+}
+
+// Ensure current live entities reflect ignore table
+static inline void ignore_apply_to_entities_unlocked() {
+  for (int i = 0; i < MAX_TRACKS; ++i) {
+    if (!g_tracks[i].in_use) continue;
+    if (ignore_contains_unlocked(g_tracks[i].addr)) SetFlag(g_tracks[i].flags, EntityFlags::Ignoring);
+    else ClearFlag(g_tracks[i].flags, EntityFlags::Ignoring);
+  }
+  for (int i = 0; i < MAX_ANCHORS; ++i) {
+    if (!g_anchors[i].in_use) continue;
+    if (ignore_contains_unlocked(g_anchors[i].addr)) SetFlag(g_anchors[i].flags, EntityFlags::Ignoring);
+    else ClearFlag(g_anchors[i].flags, EntityFlags::Ignoring);
+  }
+}
+
 // ----------------------------- Helpers -----------------------------
 
 static float score_track(const Track& t, float stationary_ratio) {
@@ -228,6 +289,8 @@ static Track* find_or_alloc_track(TrackKind kind, const uint8_t addr[6], uint32_
       memcpy(t.addr, addr, 6);
       t.vendor = GetVendor(addr);
       t.flags = EntityFlags::None;
+      if (ignore_contains_unlocked(addr))
+        t.flags |= EntityFlags::Ignoring;
       t.index = g_next_index++;
       t.first_seen_s = ts_s;
       t.last_seen_s  = ts_s;
@@ -277,6 +340,8 @@ static Anchor* find_or_alloc_anchor(const uint8_t bssid[6], uint32_t ts_s) {
       memcpy(a.addr, bssid, 6);
       a.vendor = GetVendor(bssid);
       a.flags = EntityFlags::None;
+      if (ignore_contains_unlocked(bssid))
+        a.flags |= EntityFlags::Ignoring;
       a.index = g_next_index++;
       a.last_seen_s = ts_s;
       a.last_rssi = -100;
@@ -1000,6 +1065,11 @@ void DeviceTracker::updateEntity(const EntityView* in)
       else
         ClearFlag(g_anchors[i].flags, EntityFlags::Ignoring);
 
+      if (HasFlag(in->flags, EntityFlags::Ignoring))
+        ignore_add_unlocked(g_anchors[i].addr);
+      else
+        ignore_remove_unlocked(g_anchors[i].addr);
+
       portEXIT_CRITICAL(&g_lock);
       return;
     }
@@ -1019,6 +1089,11 @@ void DeviceTracker::updateEntity(const EntityView* in)
         SetFlag(g_tracks[i].flags, EntityFlags::Ignoring);
       else
         ClearFlag(g_tracks[i].flags, EntityFlags::Ignoring);
+
+      if (HasFlag(in->flags, EntityFlags::Ignoring))
+        ignore_add_unlocked(g_tracks[i].addr);
+      else
+        ignore_remove_unlocked(g_tracks[i].addr);
 
       portEXIT_CRITICAL(&g_lock);
       return;
@@ -1752,62 +1827,38 @@ bool DeviceTracker::readIgnorelist()
     return false;
   }
 
-  uint32_t applied = 0;
+  uint32_t loaded  = 0;
   uint32_t skipped = 0;
 
   portENTER_CRITICAL(&g_lock);
+
+  ignore_clear_unlocked();
 
   for (JsonVariant v : items) {
     JsonObject it = v.as<JsonObject>();
     if (it.isNull()) { skipped++; continue; }
 
     const char* macStr = it["mac"].as<const char*>();
-
     uint8_t mac[6]{};
+
     if (!macStr || !parseMac(macStr, mac)) {
       skipped++;
       continue;
     }
 
-    bool found = false;
-
-    // Try anchors (WifiAp table)
-    for (int i = 0; i < MAX_ANCHORS; ++i) {
-      if (g_anchors[i].in_use && memcmp(g_anchors[i].addr, mac, 6) == 0) {
-        g_anchors[i].flags |= EntityFlags::Ignoring;
-        found = true;
-        break;
-      }
-    }
-
-    // Try tracks (BleAdv/WifiClient table)
-    if (!found) {
-      for (int i = 0; i < MAX_TRACKS; ++i) {
-        if (g_tracks[i].in_use && memcmp(g_tracks[i].addr, mac, 6) == 0) {
-          g_tracks[i].flags |= EntityFlags::Ignoring;
-          found = true;
-          break;
-        }
-      }
-    }
-
-    if (found) applied++;
-    else skipped++;
+    if (ignore_add_unlocked(mac)) loaded++;
+    else skipped++; // table full
   }
 
-  // Fix next index (keep consistent with watchlist)
-  uint16_t maxIdx = 0;
-  for (int i = 0; i < MAX_TRACKS; ++i)  if (g_tracks[i].in_use)  maxIdx = std::max<uint16_t>(maxIdx, g_tracks[i].index);
-  for (int i = 0; i < MAX_ANCHORS; ++i) if (g_anchors[i].in_use) maxIdx = std::max<uint16_t>(maxIdx, g_anchors[i].index);
-  g_next_index = (uint16_t)(maxIdx + 1);
-  if (g_next_index == 0) g_next_index = 1;
+  // Ensure current live entities reflect ignore list
+  ignore_apply_to_entities_unlocked();
 
   portEXIT_CRITICAL(&g_lock);
 
-  Serial.printf("[ignorelist] json=%u applied=%u skipped=%u\n",
-                (unsigned)items.size(), (unsigned)applied, (unsigned)skipped);
+  Serial.printf("[ignorelist] json=%u loaded=%u skipped=%u\n",
+                (unsigned)items.size(), (unsigned)loaded, (unsigned)skipped);
 
-  return applied > 0;
+  return loaded > 0;
 }
 
 bool DeviceTracker::writeIgnorelist()
@@ -1824,52 +1875,19 @@ bool DeviceTracker::writeIgnorelist()
 
   bool first = true;
 
-  // ---------- Anchors ----------
-  for (int i = 0; i < MAX_ANCHORS; ++i) {
+  for (int i = 0; i < MAX_IGNORES; ++i) {
     bool in_use = false;
-    bool ignoring = false;
     uint8_t mac[6]{};
 
+    // Snapshot one entry under lock (NO file I/O while locked)
     portENTER_CRITICAL(&g_lock);
-    if (g_anchors[i].in_use) {
+    if (g_ignores[i].in_use) {
       in_use = true;
-      ignoring = HasFlag(g_anchors[i].flags, EntityFlags::Ignoring);
-      if (ignoring) {
-        memcpy(mac, g_anchors[i].addr, 6);
-      }
+      memcpy(mac, g_ignores[i].addr, 6);
     }
     portEXIT_CRITICAL(&g_lock);
 
-    if (!in_use || !ignoring) continue;
-
-    char macStr[18];
-    if (!macToString(mac, macStr)) continue;
-
-    if (!first) f.print(",");
-    first = false;
-
-    f.print("{\"mac\":\"");
-    f.print(macStr);
-    f.print("\"}");
-  }
-
-  // ---------- Tracks ----------
-  for (int i = 0; i < MAX_TRACKS; ++i) {
-    bool in_use = false;
-    bool ignoring = false;
-    uint8_t mac[6]{};
-
-    portENTER_CRITICAL(&g_lock);
-    if (g_tracks[i].in_use) {
-      in_use = true;
-      ignoring = HasFlag(g_tracks[i].flags, EntityFlags::Ignoring);
-      if (ignoring) {
-        memcpy(mac, g_tracks[i].addr, 6);
-      }
-    }
-    portEXIT_CRITICAL(&g_lock);
-
-    if (!in_use || !ignoring) continue;
+    if (!in_use) continue;
 
     char macStr[18];
     if (!macToString(mac, macStr)) continue;
