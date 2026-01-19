@@ -14,6 +14,11 @@
 static DeviceTracker g_tracker;
 static UIGrid g_ui(VERSION);
 
+static constexpr int SD_CS   = 12;
+static constexpr int SD_MOSI = 14;
+static constexpr int SD_MISO = 39;
+static constexpr int SD_SCK  = 40;
+
 static const uint32_t UI_FRAME_MS = 33;
 
 // Total time the splash should be visible (includes init work you do after drawing it)
@@ -92,6 +97,8 @@ bool initStorage() {
   if (!SPIFFS.begin(true)) {
     Serial.println("[fs] SPIFFS mount failed");
   }
+
+  SPI.begin(SD_SCK, SD_MISO, SD_MOSI, SD_CS);
 
   if (!SD.begin(GPIO_NUM_12, SPI, 25000000, "/sd", 1)) {
     Serial.println("[kml] SD card init failed");

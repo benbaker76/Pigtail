@@ -30,12 +30,24 @@ jobs:
       - name: Build firmware
         run: platformio run -e m5stack-stamps3
 
+      - name: Merge bootable binary (bootloader + partitions + app)
+        shell: bash
+        run: |
+          pio pkg exec -p tool-esptoolpy -- esptool.py --chip esp32s3 merge_bin \
+            -o ".pio/build/m5stack-stamps3/pigtail.bin" \
+            --flash_mode dio --flash_size 8MB \
+            0x0      ".pio/build/m5stack-stamps3/bootloader.bin" \
+            0x8000   ".pio/build/m5stack-stamps3/partitions.bin" \
+            0x10000  ".pio/build/m5stack-stamps3/firmware.bin"
+
+          ls -lh ".pio/build/m5stack-stamps3/pigtail.bin"
+
       - name: Stage release files
         shell: bash
         run: |
           mkdir -p build
           cp README.md LICENSE build/
-          cp .pio/build/m5stack-stamps3/firmware.bin "build/Pigtail-Cardputer-${{ steps.version.outputs.version }}.bin"
+          cp ".pio/build/m5stack-stamps3/pigtail.bin" "build/Pigtail-Cardputer-${{ steps.version.outputs.version }}.bin"
 
       - name: Create tarball
         shell: bash

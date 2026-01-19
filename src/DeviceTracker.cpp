@@ -53,6 +53,10 @@ static constexpr const char* PATH_WATCHLIST_KML = "/pt_watchlist.kml";
 
 static constexpr const char* PATH_IGNORELIST_JSON = "/pt_ignorelist.json";
 
+static uint8_t mac_temp[6]{};
+static uint8_t ssid_temp[32]{};
+static char mac_temp_str[18]{};
+
 // ----------------------------- Time helpers -----------------------------
 
 static inline uint64_t now_us() { return (uint64_t)esp_timer_get_time(); }
@@ -1218,8 +1222,8 @@ bool DeviceTracker::readWatchlist()
     const char* macStr  = it["mac"].as<const char*>();
 
     EntityKind ek;
-    uint8_t mac[6]{};
-    if (!kindStr || !macStr || !parseKind(kindStr, ek) || !parseMac(macStr, mac)) {
+
+    if (!kindStr || !macStr || !parseKind(kindStr, ek) || !parseMac(macStr, mac_temp)) {
       skipped++;
       continue;
     }
@@ -1228,7 +1232,7 @@ bool DeviceTracker::readWatchlist()
       Anchor* a = nullptr;
 
       for (int i = 0; i < MAX_ANCHORS; ++i) {
-        if (g_anchors[i].in_use && memcmp(g_anchors[i].addr, mac, 6) == 0) { a = &g_anchors[i]; break; }
+        if (g_anchors[i].in_use && memcmp(g_anchors[i].addr, mac_temp, 6) == 0) { a = &g_anchors[i]; break; }
       }
 
       if (!a) {
@@ -1237,8 +1241,8 @@ bool DeviceTracker::readWatchlist()
             Anchor& na = g_anchors[i];
             na = Anchor{};
             na.in_use = true;
-            memcpy(na.addr, mac, 6);
-            na.vendor = GetVendor(mac);
+            memcpy(na.addr, mac_temp, 6);
+            na.vendor = GetVendor(mac_temp);
             na.flags  = EntityFlags::None;
             na.index  = g_next_index++;
             na.last_seen_s = ts;
@@ -1275,7 +1279,7 @@ bool DeviceTracker::readWatchlist()
       Track* t = nullptr;
 
       for (int i = 0; i < MAX_TRACKS; ++i) {
-        if (g_tracks[i].in_use && g_tracks[i].kind == tk && memcmp(g_tracks[i].addr, mac, 6) == 0) { t = &g_tracks[i]; break; }
+        if (g_tracks[i].in_use && g_tracks[i].kind == tk && memcmp(g_tracks[i].addr, mac_temp, 6) == 0) { t = &g_tracks[i]; break; }
       }
 
       if (!t) {
@@ -1285,8 +1289,8 @@ bool DeviceTracker::readWatchlist()
             nt = Track{};
             nt.in_use = true;
             nt.kind   = tk;
-            memcpy(nt.addr, mac, 6);
-            nt.vendor = GetVendor(mac);
+            memcpy(nt.addr, mac_temp, 6);
+            nt.vendor = GetVendor(mac_temp);
             nt.flags  = EntityFlags::None;
             nt.index  = g_next_index++;
             nt.first_seen_s = ts;
@@ -1370,11 +1374,11 @@ void DeviceTracker::outputLists()
 
   for (int i=0;i<MAX_TRACKS;i++) {
     if (g_tracks[i].in_use && HasFlag(g_tracks[i].flags, EntityFlags::Watching)) {
-      char mac[18]; macToString(g_tracks[i].addr, mac);
+      macToString(g_tracks[i].addr, mac_temp_str);
       Serial.printf("[watch] Track kind=%d idx=%u mac=%s flags=0x%X tt=%s gm=%s ss=%s\n",
         (int)g_tracks[i].kind,
         g_tracks[i].index,
-        mac,
+        mac_temp_str,
         (unsigned)g_tracks[i].flags,
         BleTracker::TrackerTypeName(g_tracks[i].tracker_type),
         BleTracker::GoogleMfrName(g_tracks[i].tracker_google_mfr),
@@ -1385,9 +1389,9 @@ void DeviceTracker::outputLists()
 
   for (int i=0;i<MAX_ANCHORS;i++) {
     if (g_anchors[i].in_use && HasFlag(g_anchors[i].flags, EntityFlags::Watching)) {
-      char mac[18]; macToString(g_anchors[i].addr, mac);
+      macToString(g_anchors[i].addr, mac_temp_str);
       Serial.printf("[watch] Anchor idx=%u mac=%s ssid_len=%u flags=0x%X\n",
-        g_anchors[i].index, mac, g_anchors[i].ssid_len, (unsigned)g_anchors[i].flags);
+        g_anchors[i].index, mac_temp_str, g_anchors[i].ssid_len, (unsigned)g_anchors[i].flags);
     }
   }
 
@@ -1428,8 +1432,6 @@ bool DeviceTracker::writeWatchlist()
   for (int i = 0; i < MAX_ANCHORS; ++i) {
     bool in_use = false;
     bool watching = false;
-    uint8_t mac[6]{};
-    uint8_t ssid[32]{};
     uint8_t ssid_len = 0;
     bool hasGeo = false;
     double lat = 0.0, lon = 0.0;
@@ -1439,10 +1441,10 @@ bool DeviceTracker::writeWatchlist()
       in_use = true;
       watching = HasFlag(g_anchors[i].flags, EntityFlags::Watching);
       if (watching) {
-        memcpy(mac, g_anchors[i].addr, 6);
+        memcpy(mac_temp, g_anchors[i].addr, 6);
 
-        ssid_len = std::min<uint8_t>(g_anchors[i].ssid_len, (uint8_t)sizeof(ssid));
-        if (ssid_len) memcpy(ssid, g_anchors[i].ssid, ssid_len);
+        ssid_len = std::min<uint8_t>(g_anchors[i].ssid_len, (uint8_t)sizeof(ssid_temp));
+        if (ssid_len) memcpy(ssid_temp, g_anchors[i].ssid, ssid_len);
 
         hasGeo = HasFlag(g_anchors[i].flags, EntityFlags::HasGeo);
         if (hasGeo) {
@@ -1460,19 +1462,18 @@ bool DeviceTracker::writeWatchlist()
 
     if (!in_use || !watching) continue;
 
-    char macStr[18];
-    if (!macToString(mac, macStr)) continue;
+    if (!macToString(mac_temp, mac_temp_str)) continue;
 
     if (!first) f.print(",");
     first = false;
 
     f.print("{\"kind\":\"WifiAp\",\"mac\":\"");
-    f.print(macStr);
+    f.print(mac_temp_str);
     f.print("\"");
 
     if (ssid_len > 0) {
       f.print(",\"ssid\":\"");
-      printJsonEscaped(f, ssid, ssid_len);
+      printJsonEscaped(f, ssid_temp, ssid_len);
       f.print("\"");
     }
 
@@ -1489,7 +1490,6 @@ bool DeviceTracker::writeWatchlist()
     bool in_use = false;
     bool watching = false;
     TrackKind tk{};
-    uint8_t mac[6]{};
     bool hasGeo = false;
     double lat = 0.0, lon = 0.0;
 
@@ -1504,7 +1504,7 @@ bool DeviceTracker::writeWatchlist()
       watching = HasFlag(g_tracks[i].flags, EntityFlags::Watching);
       if (watching) {
         tk = g_tracks[i].kind;
-        memcpy(mac, g_tracks[i].addr, 6);
+        memcpy(mac_temp, g_tracks[i].addr, 6);
 
         hasGeo = HasFlag(g_tracks[i].flags, EntityFlags::HasGeo);
         if (hasGeo) {
@@ -1522,8 +1522,7 @@ bool DeviceTracker::writeWatchlist()
 
     if (!in_use || !watching) continue;
 
-    char macStr[18];
-    if (!macToString(mac, macStr)) continue;
+    if (!macToString(mac_temp, mac_temp_str)) continue;
 
     if (!first) f.print(",");
     first = false;
@@ -1533,7 +1532,7 @@ bool DeviceTracker::writeWatchlist()
     f.print("{\"kind\":\"");
     f.print(kindStr);
     f.print("\",\"mac\":\"");
-    f.print(macStr);
+    f.print(mac_temp_str);
     f.print("\"");
 
     if (hasGeo) {
@@ -1614,8 +1613,6 @@ bool DeviceTracker::writeWatchlistKml()
   // ---------------- Anchors (WiFi APs) ----------------
   for (int i = 0; i < MAX_ANCHORS; ++i) {
     bool in_use = false, watching = false, hasGeo = false;
-    uint8_t mac[6]{};
-    uint8_t ssid[32]{};
     uint8_t ssid_len = 0;
     double lat = 0.0, lon = 0.0;
 
@@ -1627,10 +1624,10 @@ bool DeviceTracker::writeWatchlistKml()
       hasGeo   = HasFlag(g_anchors[i].flags, EntityFlags::HasGeo);
 
       if (watching && hasGeo) {
-        memcpy(mac, g_anchors[i].addr, 6);
+        memcpy(mac_temp, g_anchors[i].addr, 6);
 
-        ssid_len = std::min<uint8_t>(g_anchors[i].ssid_len, (uint8_t)sizeof(ssid));
-        if (ssid_len) memcpy(ssid, g_anchors[i].ssid, ssid_len);
+        ssid_len = std::min<uint8_t>(g_anchors[i].ssid_len, (uint8_t)sizeof(ssid_temp));
+        if (ssid_len) memcpy(ssid_temp, g_anchors[i].ssid, ssid_len);
 
         // Prefer your "display" location
         if (g_anchors[i].w_sum >= 3.0) {
@@ -1646,13 +1643,12 @@ bool DeviceTracker::writeWatchlistKml()
 
     if (!in_use || !watching || !hasGeo) continue;
 
-    char macStr[18];
-    if (!macToString(mac, macStr)) continue;
+    if (!macToString(mac_temp, mac_temp_str)) continue;
 
     char ssidStr[33]{0};
     if (ssid_len > 0) {
       size_t n = std::min<size_t>(ssid_len, 32);
-      memcpy(ssidStr, ssid, n);
+      memcpy(ssidStr, ssid_temp, n);
       ssidStr[n] = 0;
     }
 
@@ -1661,16 +1657,16 @@ bool DeviceTracker::writeWatchlistKml()
     if (ssid_len > 0) {
       printXmlEscaped(f, ssidStr);
       f.print(" (");
-      f.print(macStr);
+      f.print(mac_temp_str);
       f.print(")");
     } else {
-      f.print(macStr);
+      f.print(mac_temp_str);
     }
     f.print("</name>\n");
 
     f.print("      <description>");
     f.print("Kind: WifiAp&#10;MAC: ");
-    f.print(macStr);
+    f.print(mac_temp_str);
     if (ssid_len > 0) {
       f.print("&#10;SSID: ");
       printXmlEscaped(f, ssidStr);
@@ -1694,9 +1690,7 @@ bool DeviceTracker::writeWatchlistKml()
   for (int i = 0; i < MAX_TRACKS; ++i) {
     bool in_use = false, watching = false, hasGeo = false;
     TrackKind tk{};
-    uint8_t mac[6]{};
     double lat = 0.0, lon = 0.0;
-
     TrackerType tt = TrackerType::Unknown;
     GoogleFmnManufacturer gm = GoogleFmnManufacturer::Unknown;
     SamsungTrackerSubtype ss = SamsungTrackerSubtype::Unknown;
@@ -1710,7 +1704,7 @@ bool DeviceTracker::writeWatchlistKml()
 
       if (watching && hasGeo) {
         tk = g_tracks[i].kind;
-        memcpy(mac, g_tracks[i].addr, 6);
+        memcpy(mac_temp, g_tracks[i].addr, 6);
         lat = g_tracks[i].last_lat;
         lon = g_tracks[i].last_lon;
 
@@ -1724,8 +1718,7 @@ bool DeviceTracker::writeWatchlistKml()
 
     if (!in_use || !watching || !hasGeo) continue;
 
-    char macStr[18];
-    if (!macToString(mac, macStr)) continue;
+    if (!macToString(mac_temp, mac_temp_str)) continue;
 
     const char* kindStr = (tk == TrackKind::BleAdv) ? "BleAdv" : "WifiClient";
 
@@ -1741,14 +1734,14 @@ bool DeviceTracker::writeWatchlistKml()
       f.print(" ");
     }
 
-    f.print(macStr);
+    f.print(mac_temp_str);
     f.print("</name>\n");
 
     f.print("      <description>");
     f.print("Kind: ");
     f.print(kindStr);
     f.print("&#10;MAC: ");
-    f.print(macStr);
+    f.print(mac_temp_str);
 
     if (tt != TrackerType::Unknown) {
       f.print("&#10;TrackerType: ");
@@ -1839,14 +1832,13 @@ bool DeviceTracker::readIgnorelist()
     if (it.isNull()) { skipped++; continue; }
 
     const char* macStr = it["mac"].as<const char*>();
-    uint8_t mac[6]{};
 
-    if (!macStr || !parseMac(macStr, mac)) {
+    if (!macStr || !parseMac(macStr, mac_temp)) {
       skipped++;
       continue;
     }
 
-    if (ignore_add_unlocked(mac)) loaded++;
+    if (ignore_add_unlocked(mac_temp)) loaded++;
     else skipped++; // table full
   }
 
@@ -1877,26 +1869,24 @@ bool DeviceTracker::writeIgnorelist()
 
   for (int i = 0; i < MAX_IGNORES; ++i) {
     bool in_use = false;
-    uint8_t mac[6]{};
 
     // Snapshot one entry under lock (NO file I/O while locked)
     portENTER_CRITICAL(&g_lock);
     if (g_ignores[i].in_use) {
       in_use = true;
-      memcpy(mac, g_ignores[i].addr, 6);
+      memcpy(mac_temp, g_ignores[i].addr, 6);
     }
     portEXIT_CRITICAL(&g_lock);
 
     if (!in_use) continue;
 
-    char macStr[18];
-    if (!macToString(mac, macStr)) continue;
+    if (!macToString(mac_temp, mac_temp_str)) continue;
 
     if (!first) f.print(",");
     first = false;
 
     f.print("{\"mac\":\"");
-    f.print(macStr);
+    f.print(mac_temp_str);
     f.print("\"}");
   }
 
