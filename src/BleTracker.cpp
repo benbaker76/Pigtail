@@ -13,9 +13,6 @@ static constexpr const char* UUID_FD69 = "0000FD69-0000-1000-8000-00805F9B34FB";
 static constexpr const char* UUID_FA25 = "0000FA25-0000-1000-8000-00805F9B34FB"; // PebbleBee
 static constexpr const char* UUID_FEED = "0000FEED-0000-1000-8000-00805F9B34FB"; // Tile
 
-BleTracker::BleTracker(NimBLEScan* bleScan)
-  : _bleScan(bleScan) {}
-
 static inline bool memcmpi(const uint8_t* a, const uint8_t* b, size_t n) {
   for (size_t i = 0; i < n; ++i) {
     if (std::tolower(a[i]) != std::tolower(b[i])) return false;

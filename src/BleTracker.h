@@ -1,15 +1,14 @@
 #pragma once
 
 #include <cstdint>
-#include <string>
 
-#include <NimBLEDevice.h>   // NimBLEScan, NimBLEAdvertisedDevice
+#include <NimBLEDevice.h>   // NimBLEAdvertisedDevice
 
 #include "Track.h"          // Track, EntityFlags, Vendor
 
 class BleTracker {
 public:
-  explicit BleTracker(NimBLEScan* scan);
+  BleTracker() = default;
 
   // Pure classification from an advertisement.
   TrackerInfo Inspect(const NimBLEAdvertisedDevice& dev,
@@ -27,8 +26,6 @@ public:
   static bool ParseSamsungSubtype(const char* s, SamsungTrackerSubtype& out);
 
 private:
-  NimBLEScan* _bleScan;
-
   // Heuristic helpers
   static bool HasService(const NimBLEAdvertisedDevice& dev, const char* uuid_str);
   static bool TryGetAppleMfgPayload(const NimBLEAdvertisedDevice& dev, const uint8_t*& p, size_t& n);

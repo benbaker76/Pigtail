@@ -9,7 +9,7 @@
 #include "Logo.h"
 #include "Colors.h"
 
-#define VERSION "1.0.09"
+#define VERSION "1.0.10"
 
 static DeviceTracker g_tracker;
 static UIGrid g_ui(VERSION);
@@ -264,6 +264,8 @@ void loop() {
 
   if (M5Cardputer.Keyboard.isChange() && M5Cardputer.Keyboard.isPressed())
     g_ui.handleKeyboard(M5Cardputer.Keyboard);
+
+  g_ui.pollLongPress(M5Cardputer.Keyboard);
 
   // Stationary ratio heuristic:
   // If the environment segmentation hasn't advanced recently, user is likely stationary.

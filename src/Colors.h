@@ -125,6 +125,7 @@ struct Colors
         C_LAVENDER,    // Csr
         C_BLUE,        // DLink
         C_RED,         // Espressif
+        C_BLUE,        // EssilorLuxottica
         C_LIGHT_GREY,  // Eufy
         C_LIGHT_GREY,  // Google
         C_RED,         // Huawei
@@ -134,6 +135,7 @@ struct Colors
         C_BLUE,        // Jio
         C_ORANGE,      // Mercury
         C_GREEN,       // Mercusys
+        C_BLUE,        // Meta
         C_DARK_GREY,   // Microsoft
         C_ORANGE,      // Mikrotik
         C_BLUE,        // Motorola
@@ -143,6 +145,7 @@ struct Colors
         C_RED,         // RaspberryPi
         C_LIGHT_GREY,  // RollingSquare
         C_BLUE,        // Samsung
+        C_YELLOW,      // Snapchat
         C_DARK_GREY,   // Sony
         C_RED,         // Ti
         C_YELLOW,      // Tile

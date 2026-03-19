@@ -25,6 +25,7 @@ Pigtail watches for:
 It then:
 - Tracks devices over time
 - Estimates proximity trends using signal strength (**RSSI**)
+- Detects **BLE trackers** (AirTag, SmartTag, Tile, etc.) and **smart glasses** (Meta Ray-Ban, Snap Spectacles, EssilorLuxottica)
 - Assigns a score (0-100) based on how long and how consistently a device appears, plus some environment/crowd heuristics
 - Presents everything in a compact UI designed for a **240x135** display
 
@@ -71,8 +72,11 @@ Default navigation (as implemented in the current UIGrid input handling):
 - **Esc** : reset (grid mode)
 - **Space** : cycle grid icon mode
 - **`w`**: add to watchlist (eye icon)
+- **`w`** (hold 5s): clear entire watchlist (confirmation tone)
 - **`i`**: add to ignorelist (warning icon)
+- **`i`** (hold 5s): clear entire ignorelist (confirmation tone)
 - **`k`**: dump watchlist to `pt_watchlist.kml` file on root of sd card
+- **`s`**: toggle sound on/off (a confirmation beep plays when unmuting)
 
 Navigation behavior:
 - No wrap-around at the edges (left at start does nothing; right at end does nothing).
@@ -108,6 +112,7 @@ Entity types use consistent accent colors so you can differentiate categories in
 
 - **BLE**: Blue
 - **BLE tracker**: Yellow
+- **Smart glasses**: Pink
 - **Wi-Fi client**: Green
 - **Wi-Fi AP**: Orange
 
@@ -148,6 +153,20 @@ Trackers it will attempt to identify:
 
 ---
 
+## Smart Glasses
+
+Pigtail can detect nearby smart glasses using BLE manufacturer data (company IDs) and device name heuristics. Detected glasses are shown with a **pink glasses icon** in both the grid and detail views.
+
+Glasses it will attempt to identify:
+
+- **Meta Ray-Ban** (company IDs 0x01AB, 0x058E; device name contains "rayban" / "ray-ban" / "ray ban")
+- **EssilorLuxottica** (company ID 0x0D53)
+- **Snap Spectacles** (company ID 0x03C2)
+
+Glasses detection results are persisted alongside tracker data in the watchlist, so watched glasses survive reboots.
+
+---
+
 ## Watchlist
 
 ![](images/watchlist_00.png)
@@ -155,6 +174,8 @@ Trackers it will attempt to identify:
 Pigtail includes a **watchlist** feature to help you keep specific devices pinned and easy to monitor across scans and restarts. While viewing a device (in either the grid or detail view), press **`w`** to toggle the device’s `Watching` flag. When enabled, the UI displays a **red eye** icon on that device’s tile (and in the detail view) to make it immediately obvious that the device is being tracked.
 
 Watchlisted devices are **persisted to flash memory**, so your selections survive reboots and power cycles without needing to re-tag devices each time. In addition, watchlisted entries are automatically **sorted to the front of the list**, ensuring the devices you care about remain visible even as new BLE/Wi-Fi targets appear and the list grows.
+
+To **clear the entire watchlist**, hold **`w`** for 5 seconds. A descending two-tone sound confirms the action. Similarly, hold **`i`** for 5 seconds to **clear the entire ignorelist**.
 
 ## KML Export
 

@@ -18,6 +18,7 @@ public:
   void update(float stationary_ratio);
   void cycleGridIconMode();
   void handleKeyboard(Keyboard_Class& kb);
+  void pollLongPress(Keyboard_Class& kb);
 
 private:
   enum class Screen : uint8_t { Grid, Detail };
@@ -123,4 +124,14 @@ private:
   // Loading animation (grid mode)
   uint32_t _loading_last_ms = 0;
   uint8_t  _loading_frame = 0;      // 0..7
+
+  // Long-press tracking (5-second hold to clear lists)
+  static constexpr uint32_t LONG_PRESS_MS = 5000;
+  uint32_t _w_press_start_ms = 0;   // 0 = not held
+  uint32_t _i_press_start_ms = 0;   // 0 = not held
+  bool     _w_long_fired = false;
+  bool     _i_long_fired = false;
+
+  // Sound mute toggle
+  bool _muted = false;
 };

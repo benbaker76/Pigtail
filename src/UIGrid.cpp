@@ -10,6 +10,7 @@
 #include "MarkovNameGenerator.h"
 #include "MacPrefixes.h"
 #include "BleTracker.h"
+#include "BleGlasses.h"
 #include "Track.h"
 
 #include <algorithm>
@@ -380,6 +381,13 @@ void UIGrid::handleKeyboard(Keyboard_Class& kb)
   const bool wKey  = kb.isKeyPressed('w') || kb.isKeyPressed('W');
   const bool iKey  = kb.isKeyPressed('i') || kb.isKeyPressed('I');
   const bool kKey  = kb.isKeyPressed('k') || kb.isKeyPressed('K');
+  const bool sKey  = kb.isKeyPressed('s') || kb.isKeyPressed('S');
+
+  if (sKey) {
+    _muted = !_muted;
+    if (!_muted) playSound(600, 100); // confirmation beep when unmuting
+    return;
+  }
 
   switch(_screen) {
     case Screen::Grid:
@@ -488,6 +496,47 @@ void UIGrid::handleKeyboard(Keyboard_Class& kb)
 
     default:
       break;
+  }
+}
+
+void UIGrid::pollLongPress(Keyboard_Class& kb)
+{
+  const uint32_t now = millis();
+  const bool wHeld = kb.isKeyPressed('w') || kb.isKeyPressed('W');
+  const bool iHeld = kb.isKeyPressed('i') || kb.isKeyPressed('I');
+
+  // --- W long-press: clear watchlist ---
+  if (wHeld) {
+    if (_w_press_start_ms == 0) {
+      _w_press_start_ms = now;
+      _w_long_fired = false;
+    } else if (!_w_long_fired && (now - _w_press_start_ms >= LONG_PRESS_MS)) {
+      _w_long_fired = true;
+      if (_tracker) _tracker->clearWatchlist();
+      playSound(1200, 200);
+      delay(150);
+      playSound(800, 200);
+    }
+  } else {
+    _w_press_start_ms = 0;
+    _w_long_fired = false;
+  }
+
+  // --- I long-press: clear ignorelist ---
+  if (iHeld) {
+    if (_i_press_start_ms == 0) {
+      _i_press_start_ms = now;
+      _i_long_fired = false;
+    } else if (!_i_long_fired && (now - _i_press_start_ms >= LONG_PRESS_MS)) {
+      _i_long_fired = true;
+      if (_tracker) _tracker->clearIgnorelist();
+      playSound(1200, 200);
+      delay(150);
+      playSound(800, 200);
+    }
+  } else {
+    _i_press_start_ms = 0;
+    _i_long_fired = false;
   }
 }
 
@@ -708,6 +757,7 @@ void UIGrid::drawTile(int slot, int x, int y)
 
 void UIGrid::playSound(int frequency, int duration)
 {
+  if (_muted) return;
   M5Cardputer.Speaker.tone(frequency, duration);
 }
 
@@ -805,6 +855,13 @@ void UIGrid::drawDetail()
     offY += 12;
   }
 
+  if (e.glasses_type != GlassesType::Unknown) {
+    const char* glassesTypeStr = BleGlasses::GlassesTypeName(e.glasses_type);
+    _spr->setCursor(offX, offY);
+    _spr->printf("Glasses: %s", glassesTypeStr);
+    offY += 12;
+  }
+
   _spr->setCursor(offX, offY);
   _spr->printf("MAC: %s %s", mac, isMacRandomized ? "[R]" : "");
   offY += 12;
@@ -864,6 +921,11 @@ void UIGrid::drawDetail()
 
   if (e.tracker_type != TrackerType::Unknown) {
     renderIcon1bit16(_w - 16 - 4, offY, Icons::Get16x16(Icons::IconSymbol::Tracker), C_YELLOW, false);
+    offY -= 18;
+  }
+
+  if (e.glasses_type != GlassesType::Unknown) {
+    renderIcon1bit16(_w - 16 - 4, offY, Icons::Get16x16(Icons::IconSymbol::Glasses), C_PINK, false);
     offY -= 18;
   }
 
@@ -961,6 +1023,12 @@ void UIGrid::renderGridIconToSprite(int dstX, int dstY, const EntityView& e)
   {
     small2Icon = Icons::Get8x8(Icons::IconSymbol::Tracker);
     smallIcon2ColorIndex = C_YELLOW;
+  }
+
+  if (e.glasses_type != GlassesType::Unknown)
+  {
+    small2Icon = Icons::Get8x8(Icons::IconSymbol::Glasses);
+    smallIcon2ColorIndex = C_PINK;
   }
 
   _icon.Reset(id, mac);

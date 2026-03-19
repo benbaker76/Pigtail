@@ -19,6 +19,18 @@ enum class TrackerType : uint8_t {
   Tile,
 };
 
+enum class GlassesType : uint8_t {
+  Unknown = 0,
+  MetaRayBan,
+  EssilorLuxottica,
+  SnapSpectacles,
+};
+
+struct GlassesInfo {
+  GlassesType type = GlassesType::Unknown;
+  uint8_t     confidence = 0; // 0..100
+};
+
 enum class GoogleFmnManufacturer : uint8_t {
   Unknown = 0,
   PebbleBee,
@@ -116,6 +128,9 @@ struct EntityView {
   SamsungTrackerSubtype tracker_samsung_subtype;
   uint8_t tracker_confidence = 0;
 
+  GlassesType glasses_type = GlassesType::Unknown;
+  uint8_t glasses_confidence = 0;
+
   // AP geo-tagging (valid primarily for WifiAp entries)
   EntityFlags flags = EntityFlags::None;
   double     lat = 0.0;
@@ -158,6 +173,9 @@ struct Track {
   GoogleFmnManufacturer tracker_google_mfr = GoogleFmnManufacturer::Unknown;
   SamsungTrackerSubtype tracker_samsung_subtype = SamsungTrackerSubtype::Unknown;
   uint8_t tracker_confidence = 0;
+
+  GlassesType glasses_type = GlassesType::Unknown;
+  uint8_t glasses_confidence = 0;
 };
 
 struct Anchor {

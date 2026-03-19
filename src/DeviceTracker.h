@@ -34,6 +34,8 @@ public:
   bool writeWatchlistKml();
   bool readIgnorelist();
   bool writeIgnorelist();
+  void clearWatchlist();
+  void clearIgnorelist();
 
 private:
   NimBLEScan* _bleScan;
