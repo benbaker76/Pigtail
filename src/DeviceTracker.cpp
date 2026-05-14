@@ -801,9 +801,14 @@ public:
     obs.ts_s = now_s();
     obs.rssi_dbm = (int8_t)dev->getRSSI();
 
+    // NimBLE stores ble_addr_t.val in little-endian (val[0]=LSB, val[5]=OUI MSB).
+    // The rest of the pipeline — GetVendor(), IsMacRandomized(), macToString(),
+    // watchlist JSON — assumes canonical big-endian (addr[0]=OUI MSB), matching
+    // how the 802.11 paths fill obs.addr. Reverse on entry so BLE addresses live
+    // in canonical order everywhere downstream.
     NimBLEAddress a = dev->getAddress();
     const ble_addr_t* addr_ptr = a.getBase();
-    memcpy(obs.addr, addr_ptr->val, 6);
+    std::reverse_copy(addr_ptr->val, addr_ptr->val + 6, obs.addr);
 
     const std::vector<uint8_t>& p = dev->getPayload();
     BleTracker::GetName(p.data(), p.size(), obs.ssid, &obs.ssid_len);
@@ -1259,6 +1264,12 @@ bool DeviceTracker::readWatchlist()
     return false;
   }
 
+  // v3 introduced canonical BLE MAC storage. Files at v2 or below have BleAdv
+  // MACs in reversed (NimBLE little-endian) order — flip them on the way in
+  // so they match live observations from this build forward.
+  const int fileVersion = doc["version"].is<int>() ? doc["version"].as<int>() : 1;
+  const bool reverseBleMacs = (fileVersion < 3);
+
   const uint32_t ts = now_s();
 
   uint32_t applied = 0;
@@ -1278,6 +1289,10 @@ bool DeviceTracker::readWatchlist()
     if (!kindStr || !macStr || !parseKind(kindStr, ek) || !parseMac(macStr, mac_temp)) {
       skipped++;
       continue;
+    }
+
+    if (reverseBleMacs && ek == EntityKind::BleAdv) {
+      std::reverse(mac_temp, mac_temp + 6);
     }
 
     if (ek == EntityKind::WifiAp) {
@@ -1500,7 +1515,10 @@ bool DeviceTracker::writeWatchlist()
     return false;
   }
 
-  f.print("{\"version\":2,\"items\":[");
+  // v3: BLE MACs are stored canonical (addr[0]=OUI MSB) to match WiFi.
+  // v2 and earlier wrote them in NimBLE little-endian order; readWatchlist
+  // detects version < 3 and byte-reverses BleAdv entries on load.
+  f.print("{\"version\":3,\"items\":[");
   bool first = true;
 
   // ---------- Anchors ----------
