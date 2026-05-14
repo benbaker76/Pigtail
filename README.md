@@ -25,7 +25,7 @@ Pigtail watches for:
 It then:
 - Tracks devices over time
 - Estimates proximity trends using signal strength (**RSSI**)
-- Detects **BLE trackers** (AirTag, SmartTag, Tile, etc.) and **smart glasses** (Meta Ray-Ban, Snap Spectacles, EssilorLuxottica)
+- Detects **BLE trackers** (AirTag, SmartTag, Tile, etc.), **smart glasses** (Meta Ray-Ban, Snap Spectacles, EssilorLuxottica), and **Flock Safety surveillance infrastructure** (cameras, Raven gear)
 - Assigns a score (0-100) based on how long and how consistently a device appears, plus some environment/crowd heuristics
 - Presents everything in a compact UI designed for a **240x135** display
 
@@ -164,6 +164,26 @@ Glasses it will attempt to identify:
 - **Snap Spectacles** (company ID 0x03C2)
 
 Glasses detection results are persisted alongside tracker data in the watchlist, so watched glasses survive reboots.
+
+---
+
+## Flock Surveillance Detection
+
+Pigtail can identify nearby **Flock Safety** surveillance hardware (fixed cameras and Raven gear) via BLE advertisements. Detected Flock devices are shown with a **green Flock icon** in the grid (via the vendor mapping) and surface a `Flock: <type>` line plus a side badge in the detail view.
+
+Signals it will check, in priority order:
+
+- **Manufacturer ID `0x09C8`** (XUNTONG, supplies Flock's BLE radios — the strongest single signal). When this hits, the subtype is promoted to `Raven` if a Raven service UUID is also advertised.
+- **Raven proprietary service UUIDs** (`0x3100`, `0x3200`, `0x3300`, `0x3400`, `0x3500` — sit above the Bluetooth SIG assigned range and uniquely tag Raven firmware)
+- **Device name** containing `"raven"` or `"flock"`
+- **OUI prefix `B4:1E:52`** as a fallback when no payload hint matches
+
+Detection results are persisted alongside tracker / glasses data in the watchlist and survive reboots. In KML exports, Flock detections take precedence over Glasses / Tracker labels in the placemark name (and a `FlockType` field appears in the description).
+
+Credits for the underlying research:
+- **[colonelpanichacks/flock-you](https://github.com/colonelpanichacks/flock-you)** — main BLE/Wi-Fi Flock detector ecosystem
+- **[wgreenberg/flock-you](https://github.com/wgreenberg/flock-you)** — discovered the `0x09C8` (XUNTONG) BLE manufacturer ID signature
+- **[GainSec](https://github.com/GainSec)** — Raven BLE service UUID dataset (`raven_configurations.json`)
 
 ---
 
