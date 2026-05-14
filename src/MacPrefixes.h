@@ -18,6 +18,7 @@ enum class Vendor : std::uint8_t {
     Espressif,
     EssilorLuxottica,
     Eufy,
+    Flock,
     Google,
     Huawei,
     Innway,
@@ -58,6 +59,7 @@ static const char *VendorNames[] {
     "Espressif",
     "EssilorLuxottica",
     "Eufy",
+    "Flock",
     "Google",
     "Huawei",
     "Innway",
@@ -6247,6 +6249,7 @@ static const MacEntry mac_entries_24[] = {
     { {0xB4, 0x1A, 0x1D}, Vendor::Samsung },
     { {0xB4, 0x1B, 0xB0}, Vendor::Apple },
     { {0xB4, 0x1D, 0xC4}, Vendor::Huawei },
+    { {0xB4, 0x1E, 0x52}, Vendor::Flock },
     { {0xB4, 0x1F, 0x4D}, Vendor::Sony },
     { {0xB4, 0x23, 0xA2}, Vendor::Google },
     { {0xB4, 0x2B, 0xB9}, Vendor::Huawei },
@@ -6413,10 +6416,10 @@ static const MacEntry mac_entries_24[] = {
     { {0xB8, 0xBB, 0xAF}, Vendor::Samsung },
     { {0xB8, 0xBC, 0x1B}, Vendor::Huawei },
     { {0xB8, 0xBC, 0x5B}, Vendor::Samsung },
-    { {0xB8, 0xBE, 0xBF}, Vendor::Cisco },
 };
 
 static const MacEntry mac_entries_25[] = {
+    { {0xB8, 0xBE, 0xBF}, Vendor::Cisco },
     { {0xB8, 0xBF, 0x83}, Vendor::Intel },
     { {0xB8, 0xC1, 0x11}, Vendor::Apple },
     { {0xB8, 0xC3, 0x85}, Vendor::Huawei },
@@ -6666,10 +6669,10 @@ static const MacEntry mac_entries_25[] = {
     { {0xC0, 0xCD, 0xD6}, Vendor::Espressif },
     { {0xC0, 0xCE, 0xCD}, Vendor::Apple },
     { {0xC0, 0xD0, 0x12}, Vendor::Apple },
-    { {0xC0, 0xD0, 0x26}, Vendor::Huawei },
 };
 
 static const MacEntry mac_entries_26[] = {
+    { {0xC0, 0xD0, 0x26}, Vendor::Huawei },
     { {0xC0, 0xD1, 0x93}, Vendor::Huawei },
     { {0xC0, 0xD2, 0xDD}, Vendor::Samsung },
     { {0xC0, 0xD3, 0xC0}, Vendor::Samsung },
@@ -6919,10 +6922,10 @@ static const MacEntry mac_entries_26[] = {
     { {0xC8, 0xBA, 0x94}, Vendor::Samsung },
     { {0xC8, 0xBB, 0x81}, Vendor::Huawei },
     { {0xC8, 0xBC, 0x9C}, Vendor::Huawei },
-    { {0xC8, 0xBC, 0xC8}, Vendor::Apple },
 };
 
 static const MacEntry mac_entries_27[] = {
+    { {0xC8, 0xBC, 0xC8}, Vendor::Apple },
     { {0xC8, 0xBD, 0x4D}, Vendor::Samsung },
     { {0xC8, 0xBD, 0x69}, Vendor::Samsung },
     { {0xC8, 0xBE, 0x19}, Vendor::DLink },
@@ -7172,10 +7175,10 @@ static const MacEntry mac_entries_27[] = {
     { {0xD0, 0xC7, 0x89}, Vendor::Cisco },
     { {0xD0, 0xC7, 0xC0}, Vendor::TpLink },
     { {0xD0, 0xCF, 0x13}, Vendor::Espressif },
-    { {0xD0, 0xD0, 0x03}, Vendor::Samsung },
 };
 
 static const MacEntry mac_entries_28[] = {
+    { {0xD0, 0xD0, 0x03}, Vendor::Samsung },
     { {0xD0, 0xD0, 0x4B}, Vendor::Huawei },
     { {0xD0, 0xD0, 0xFD}, Vendor::Cisco },
     { {0xD0, 0xD2, 0x3C}, Vendor::Apple },
@@ -7425,10 +7428,10 @@ static const MacEntry mac_entries_28[] = {
     { {0xDC, 0x2B, 0x2A}, Vendor::Apple },
     { {0xDC, 0x2B, 0x61}, Vendor::Apple },
     { {0xDC, 0x2C, 0x6E}, Vendor::Mikrotik },
-    { {0xDC, 0x2D, 0x3C}, Vendor::Huawei },
 };
 
 static const MacEntry mac_entries_29[] = {
+    { {0xDC, 0x2D, 0x3C}, Vendor::Huawei },
     { {0xDC, 0x33, 0x3D}, Vendor::Huawei },
     { {0xDC, 0x37, 0x14}, Vendor::Apple },
     { {0xDC, 0x39, 0x79}, Vendor::Cisco },
@@ -7678,10 +7681,10 @@ static const MacEntry mac_entries_29[] = {
     { {0xE4, 0x58, 0xE7}, Vendor::Samsung },
     { {0xE4, 0x5D, 0x39}, Vendor::Ti },
     { {0xE4, 0x5D, 0x75}, Vendor::Samsung },
-    { {0xE4, 0x5E, 0x1B}, Vendor::Google },
 };
 
 static const MacEntry mac_entries_30[] = {
+    { {0xE4, 0x5E, 0x1B}, Vendor::Google },
     { {0xE4, 0x5E, 0x37}, Vendor::Intel },
     { {0xE4, 0x5F, 0x01}, Vendor::RaspberryPi },
     { {0xE4, 0x60, 0x17}, Vendor::Intel },
@@ -7931,10 +7934,10 @@ static const MacEntry mac_entries_30[] = {
     { {0xEC, 0x94, 0x68}, Vendor::Meta },
     { {0xEC, 0x94, 0xCB}, Vendor::Espressif },
     { {0xEC, 0x97, 0xA2}, Vendor::Apple },
-    { {0xEC, 0x9A, 0x34}, Vendor::Ti },
 };
 
 static const MacEntry mac_entries_31[] = {
+    { {0xEC, 0x9A, 0x34}, Vendor::Ti },
     { {0xEC, 0x9B, 0xF3}, Vendor::Samsung },
     { {0xEC, 0xA1, 0xD1}, Vendor::Huawei },
     { {0xEC, 0xA6, 0x2F}, Vendor::Huawei },
@@ -8184,10 +8187,10 @@ static const MacEntry mac_entries_31[] = {
     { {0xF4, 0xBD, 0x9E}, Vendor::Cisco },
     { {0xF4, 0xBE, 0xEC}, Vendor::Apple },
     { {0xF4, 0xBF, 0x80}, Vendor::Huawei },
-    { {0xF4, 0xC2, 0x48}, Vendor::Samsung },
 };
 
 static const MacEntry mac_entries_32[] = {
+    { {0xF4, 0xC2, 0x48}, Vendor::Samsung },
     { {0xF4, 0xC7, 0x14}, Vendor::Huawei },
     { {0xF4, 0xC8, 0x8A}, Vendor::Intel },
     { {0xF4, 0xCB, 0x52}, Vendor::Huawei },
@@ -8437,10 +8440,10 @@ static const MacEntry mac_entries_32[] = {
     { {0xFC, 0xBC, 0xD1}, Vendor::Huawei },
     { {0xFC, 0xC2, 0x33}, Vendor::Asus },
     { {0xFC, 0xC7, 0x34}, Vendor::Samsung },
-    { {0xFC, 0xD4, 0x36}, Vendor::Motorola },
 };
 
 static const MacEntry mac_entries_33[] = {
+    { {0xFC, 0xD4, 0x36}, Vendor::Motorola },
     { {0xFC, 0xD7, 0x33}, Vendor::TpLink },
     { {0xFC, 0xD8, 0x48}, Vendor::Apple },
     { {0xFC, 0xDE, 0x90}, Vendor::Samsung },
@@ -8533,7 +8536,7 @@ static const std::size_t mac_array_sizes[] = {
     250,
     250,
     250,
-    19,
+    20,
 };
 
 static inline int ComparePrefix3(const std::uint8_t a[3], const std::uint8_t b[3])
@@ -8574,4 +8577,4 @@ static inline const char* VendorToString(Vendor v)
     return VendorNames[static_cast<std::size_t>(v)];
 }
 
-// Entries: 8269 in 34 chunk(s)
+// Entries: 8270 in 34 chunk(s)

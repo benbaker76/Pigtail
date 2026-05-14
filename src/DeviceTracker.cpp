@@ -1,6 +1,7 @@
 #include "DeviceTracker.h"
 #include "BleTracker.h"
 #include "BleGlasses.h"
+#include "BleFlock.h"
 #include "Track.h"
 
 #include <WiFi.h>
@@ -192,11 +193,15 @@ struct Observation {
 
   GlassesType           glasses_type = GlassesType::Unknown;
   uint8_t               glasses_confidence = 0;
+
+  FlockType             flock_type = FlockType::Unknown;
+  uint8_t               flock_confidence = 0;
 };
 
 static QueueHandle_t g_obs_q = nullptr;
 static BleTracker* g_bleTracker = nullptr;
 static BleGlasses* g_bleGlasses = nullptr;
+static BleFlock*   g_bleFlock   = nullptr;
 
 // ----------------------------- Ignorelist (persistent in-memory) -----------------------------
 
@@ -626,6 +631,20 @@ static void process_observation(const Observation& obs) {
         }
       }
       t->glasses_confidence = max(t->glasses_confidence, obs.glasses_confidence);
+
+      // Apply flock results. Vendor inference here matters extra: BLE addrs
+      // arrive in NimBLE little-endian order so the MAC-prefix GetVendor()
+      // path in find_or_alloc_track won't match the canonical OUI for BLE.
+      // Inspect() handles the byte order correctly, so we can still tag the
+      // vendor when any BLE signal hits.
+      if (obs.flock_type != FlockType::Unknown) {
+        t->flock_type = obs.flock_type;
+
+        if (t->vendor == Vendor::Unknown) {
+          t->vendor = BleFlock::GetVendorFromFlockType(obs.flock_type);
+        }
+      }
+      t->flock_confidence = max(t->flock_confidence, obs.flock_confidence);
     } break;
 
     case ObsKind::WifiApBeacon:
@@ -803,6 +822,12 @@ public:
       obs.glasses_confidence = ginfo.confidence;
     }
 
+    if (g_bleFlock) {
+      const FlockInfo finfo = g_bleFlock->Inspect(*dev, obs.ssid, obs.ssid_len);
+      obs.flock_type = finfo.type;
+      obs.flock_confidence = finfo.confidence;
+    }
+
     xQueueSend(g_obs_q, &obs, 0);
   }
 };
@@ -900,6 +925,7 @@ void DeviceTracker::initBleTracker()
 {
   g_bleTracker = new BleTracker();
   g_bleGlasses = new BleGlasses();
+  g_bleFlock   = new BleFlock();
 }
 
 static constexpr int OBS_Q_LEN = 64;
@@ -1004,6 +1030,8 @@ int DeviceTracker::buildSnapshot(EntityView* out, int maxOut, float stationary_r
     e.tracker_confidence = t.tracker_confidence;
     e.glasses_type = t.glasses_type;
     e.glasses_confidence = t.glasses_confidence;
+    e.flock_type = t.flock_type;
+    e.flock_confidence = t.flock_confidence;
     if (HasFlag(t.flags, EntityFlags::HasGeo)) {
       e.lat = t.last_lat;
       e.lon = t.last_lon;
@@ -1373,6 +1401,17 @@ bool DeviceTracker::readWatchlist()
         t->glasses_confidence = it["glasses_confidence"].as<uint8_t>();
       }
 
+      if (it["flock_type"].is<const char*>()) {
+        FlockType ft{};
+        if (BleFlock::ParseFlockType(it["flock_type"].as<const char*>(), ft)) {
+          t->flock_type = ft;
+        }
+      }
+
+      if (it["flock_confidence"].is<uint8_t>()) {
+        t->flock_confidence = it["flock_confidence"].as<uint8_t>();
+      }
+
       t->flags |= EntityFlags::Watching;
       applied++;
     }
@@ -1410,7 +1449,7 @@ void DeviceTracker::outputLists()
   for (int i=0;i<MAX_TRACKS;i++) {
     if (g_tracks[i].in_use && HasFlag(g_tracks[i].flags, EntityFlags::Watching)) {
       macToString(g_tracks[i].addr, mac_temp_str);
-      Serial.printf("[watch] Track kind=%d idx=%u mac=%s flags=0x%X tt=%s gm=%s ss=%s gt=%s\n",
+      Serial.printf("[watch] Track kind=%d idx=%u mac=%s flags=0x%X tt=%s gm=%s ss=%s gt=%s ft=%s\n",
         (int)g_tracks[i].kind,
         g_tracks[i].index,
         mac_temp_str,
@@ -1418,7 +1457,8 @@ void DeviceTracker::outputLists()
         BleTracker::TrackerTypeName(g_tracks[i].tracker_type),
         BleTracker::GoogleMfrName(g_tracks[i].tracker_google_mfr),
         BleTracker::SamsungSubtypeName(g_tracks[i].tracker_samsung_subtype),
-        BleGlasses::GlassesTypeName(g_tracks[i].glasses_type));
+        BleGlasses::GlassesTypeName(g_tracks[i].glasses_type),
+        BleFlock::FlockTypeName(g_tracks[i].flock_type));
     }
   }
 
@@ -1534,6 +1574,8 @@ bool DeviceTracker::writeWatchlist()
     uint8_t tc = 0;
     GlassesType gt = GlassesType::Unknown;
     uint8_t gc = 0;
+    FlockType ft = FlockType::Unknown;
+    uint8_t fc = 0;
 
     portENTER_CRITICAL(&g_lock);
     if (g_tracks[i].in_use) {
@@ -1555,6 +1597,8 @@ bool DeviceTracker::writeWatchlist()
         tc = g_tracks[i].tracker_confidence;
         gt = g_tracks[i].glasses_type;
         gc = g_tracks[i].glasses_confidence;
+        ft = g_tracks[i].flock_type;
+        fc = g_tracks[i].flock_confidence;
       }
     }
     portEXIT_CRITICAL(&g_lock);
@@ -1609,6 +1653,17 @@ bool DeviceTracker::writeWatchlist()
     if (gc != 0) {
       f.print(",\"glasses_confidence\":");
       f.print((unsigned)gc);
+    }
+
+    // ---- flock fields ----
+    if (ft != FlockType::Unknown) {
+      f.print(",\"flock_type\":\"");
+      f.print(BleFlock::FlockTypeName(ft));
+      f.print("\"");
+    }
+    if (fc != 0) {
+      f.print(",\"flock_confidence\":");
+      f.print((unsigned)fc);
     }
 
     f.print("}");
@@ -1747,6 +1802,8 @@ bool DeviceTracker::writeWatchlistKml()
     uint8_t tc = 0;
     GlassesType gt = GlassesType::Unknown;
     uint8_t gc = 0;
+    FlockType ft = FlockType::Unknown;
+    uint8_t fc = 0;
 
     portENTER_CRITICAL(&g_lock);
     if (g_tracks[i].in_use) {
@@ -1766,6 +1823,8 @@ bool DeviceTracker::writeWatchlistKml()
         tc = g_tracks[i].tracker_confidence;
         gt = g_tracks[i].glasses_type;
         gc = g_tracks[i].glasses_confidence;
+        ft = g_tracks[i].flock_type;
+        fc = g_tracks[i].flock_confidence;
       }
     }
     portEXIT_CRITICAL(&g_lock);
@@ -1779,8 +1838,12 @@ bool DeviceTracker::writeWatchlistKml()
     f.print("    <Placemark>\n");
     f.print("      <name>");
 
-    // Prefer glasses_type, then tracker_type in name
-    if (gt != GlassesType::Unknown) {
+    // Prefer flock_type (most notable), then glasses_type, then tracker_type
+    if (ft != FlockType::Unknown) {
+      f.print("Flock ");
+      f.print(BleFlock::FlockTypeName(ft));
+      f.print(" ");
+    } else if (gt != GlassesType::Unknown) {
       f.print(BleGlasses::GlassesTypeName(gt));
       f.print(" ");
     } else if (tt != TrackerType::Unknown) {
@@ -1823,6 +1886,14 @@ bool DeviceTracker::writeWatchlistKml()
     if (gc != 0) {
       f.print("&#10;GlassesConfidence: ");
       f.print((unsigned)gc);
+    }
+    if (ft != FlockType::Unknown) {
+      f.print("&#10;FlockType: ");
+      f.print(BleFlock::FlockTypeName(ft));
+    }
+    if (fc != 0) {
+      f.print("&#10;FlockConfidence: ");
+      f.print((unsigned)fc);
     }
 
     f.print("</description>\n");

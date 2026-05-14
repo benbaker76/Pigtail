@@ -31,6 +31,17 @@ struct GlassesInfo {
   uint8_t     confidence = 0; // 0..100
 };
 
+enum class FlockType : uint8_t {
+  Unknown = 0,
+  Camera,
+  Raven,
+};
+
+struct FlockInfo {
+  FlockType type = FlockType::Unknown;
+  uint8_t   confidence = 0; // 0..100
+};
+
 enum class GoogleFmnManufacturer : uint8_t {
   Unknown = 0,
   PebbleBee,
@@ -131,6 +142,9 @@ struct EntityView {
   GlassesType glasses_type = GlassesType::Unknown;
   uint8_t glasses_confidence = 0;
 
+  FlockType flock_type = FlockType::Unknown;
+  uint8_t flock_confidence = 0;
+
   // AP geo-tagging (valid primarily for WifiAp entries)
   EntityFlags flags = EntityFlags::None;
   double     lat = 0.0;
@@ -176,6 +190,9 @@ struct Track {
 
   GlassesType glasses_type = GlassesType::Unknown;
   uint8_t glasses_confidence = 0;
+
+  FlockType flock_type = FlockType::Unknown;
+  uint8_t flock_confidence = 0;
 };
 
 struct Anchor {

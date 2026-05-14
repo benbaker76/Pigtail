@@ -127,6 +127,7 @@ struct Colors
         C_RED,         // Espressif
         C_BLUE,        // EssilorLuxottica
         C_LIGHT_GREY,  // Eufy
+        C_GREEN,       // Flock
         C_LIGHT_GREY,  // Google
         C_RED,         // Huawei
         C_GREEN,       // Innway

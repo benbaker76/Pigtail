@@ -11,6 +11,7 @@
 #include "MacPrefixes.h"
 #include "BleTracker.h"
 #include "BleGlasses.h"
+#include "BleFlock.h"
 #include "Track.h"
 
 #include <algorithm>
@@ -862,6 +863,13 @@ void UIGrid::drawDetail()
     offY += 12;
   }
 
+  if (e.flock_type != FlockType::Unknown) {
+    const char* flockTypeStr = BleFlock::FlockTypeName(e.flock_type);
+    _spr->setCursor(offX, offY);
+    _spr->printf("Flock: %s", flockTypeStr);
+    offY += 12;
+  }
+
   _spr->setCursor(offX, offY);
   _spr->printf("MAC: %s %s", mac, isMacRandomized ? "[R]" : "");
   offY += 12;
@@ -926,6 +934,11 @@ void UIGrid::drawDetail()
 
   if (e.glasses_type != GlassesType::Unknown) {
     renderIcon1bit16(_w - 16 - 4, offY, Icons::Get16x16(Icons::IconSymbol::Glasses), C_PINK, false);
+    offY -= 18;
+  }
+
+  if (e.flock_type != FlockType::Unknown) {
+    renderIcon1bit16(_w - 16 - 4, offY, Icons::Get16x16(Vendor::Flock), C_GREEN, false);
     offY -= 18;
   }
 
